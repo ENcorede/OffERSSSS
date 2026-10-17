@@ -1,0 +1,877 @@
+import asyncio
+import logging
+import os
+import re
+import secrets
+import sqlite3
+import string
+from datetime import datetime, timezone
+from html import escape
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ВСТАВЬ_СЮДА_ТОКЕН")
+DB_PATH = "telegram_offers.db"
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("telegram_offers")
+
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+)
+
+dp = Dispatcher(storage=MemoryStorage())
+
+
+# ============================================================
+# PREMIUM EMOJI
+# ============================================================
+
+def emoji(emoji_id: str, fallback: str = "✨") -> str:
+    """Telegram custom emoji for message text."""
+    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+
+
+E_WELCOME = emoji("5839116473951328489", "✨")
+E_OFFER = emoji("5832251986635920010", "🎁")
+E_REJECT = emoji("5985346521103604145", "❌")
+E_ACCEPT = emoji("5985596818912712352", "✅")
+E_STARS = emoji("5920281855378068765", "⭐")
+E_GRAM = emoji("5303250111852228815", "💎")
+E_CLOCK = emoji("5778605968208170641", "🕒")
+
+
+# ============================================================
+# DATABASE
+# ============================================================
+
+db = sqlite3.connect(DB_PATH)
+db.row_factory = sqlite3.Row
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    first_name TEXT,
+    joined_at TEXT NOT NULL
+)
+""")
+
+db.execute("""
+CREATE TABLE IF NOT EXISTS offers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE NOT NULL,
+    sender_id INTEGER NOT NULL,
+    recipient_id INTEGER NOT NULL,
+    recipient_username TEXT,
+    currency TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    gift_url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    deal_code TEXT UNIQUE,
+    created_at TEXT NOT NULL
+)
+""")
+
+db.commit()
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def register_user(user):
+    db.execute("""
+        INSERT INTO users (user_id, username, first_name, joined_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            username = excluded.username,
+            first_name = excluded.first_name
+    """, (
+        user.id,
+        user.username,
+        user.first_name or "",
+        now_iso(),
+    ))
+    db.commit()
+
+
+def find_user(username):
+    username = username.strip().lstrip("@").lower()
+
+    return db.execute("""
+        SELECT * FROM users
+        WHERE lower(username) = ?
+        LIMIT 1
+    """, (username,)).fetchone()
+
+
+def get_user(user_id):
+    return db.execute(
+        "SELECT * FROM users WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+
+
+def create_offer(sender_id, recipient, currency, amount, gift_url):
+    code = secrets.token_hex(5).upper()
+
+    cur = db.execute("""
+        INSERT INTO offers (
+            code, sender_id, recipient_id, recipient_username,
+            currency, amount, gift_url, status, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    """, (
+        code,
+        sender_id,
+        recipient["user_id"],
+        recipient["username"],
+        currency,
+        amount,
+        gift_url,
+        now_iso(),
+    ))
+
+    db.commit()
+    return code, cur.lastrowid
+
+
+def get_offer(offer_id):
+    return db.execute(
+        "SELECT * FROM offers WHERE id = ?",
+        (offer_id,),
+    ).fetchone()
+
+
+def update_offer(offer_id, status, deal_code=None):
+    db.execute("""
+        UPDATE offers
+        SET status = ?, deal_code = COALESCE(?, deal_code)
+        WHERE id = ?
+    """, (status, deal_code, offer_id))
+    db.commit()
+
+
+def generate_deal_code():
+    alphabet = string.ascii_uppercase + string.digits
+
+    while True:
+        suffix = "".join(
+            secrets.choice(alphabet) for _ in range(8)
+        )
+        code = "TG-" + suffix
+
+        exists = db.execute(
+            "SELECT 1 FROM offers WHERE deal_code = ?",
+            (code,),
+        ).fetchone()
+
+        if not exists:
+            return code
+
+
+# ============================================================
+# FSM STATES
+# ============================================================
+
+class OfferForm(StatesGroup):
+    username = State()
+    currency = State()
+    amount = State()
+    gift_url = State()
+    confirm = State()
+
+
+# ============================================================
+# KEYBOARDS
+# ============================================================
+
+def main_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🎁 Предложить",
+                callback_data="offer:create",
+            )
+        ]
+    ])
+
+
+def exit_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✖️ Выйти",
+                callback_data="nav:exit",
+            )
+        ]
+    ])
+
+
+def currency_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="⭐ Stars",
+                callback_data="currency:stars",
+            ),
+            InlineKeyboardButton(
+                text="💎 Gram",
+                callback_data="currency:gram",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="✖️ Выйти",
+                callback_data="nav:exit",
+            )
+        ],
+    ])
+
+
+def confirm_offer_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Подтвердить",
+                callback_data="offer:confirm",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="✏️ Создать заново",
+                callback_data="offer:create",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="✖️ Выйти",
+                callback_data="nav:exit",
+            )
+        ],
+    ])
+
+
+def incoming_offer_keyboard(offer_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="❌ Отклонить",
+                callback_data=f"incoming:reject:{offer_id}",
+            ),
+            InlineKeyboardButton(
+                text="✅ Принять",
+                callback_data=f"incoming:accept:{offer_id}",
+            ),
+        ]
+    ])
+
+
+def warning_keyboard(offer_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="ОК, я прочитал",
+                callback_data=f"deal:warning_ok:{offer_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="✖️ Выйти",
+                callback_data="nav:exit",
+            )
+        ],
+    ])
+
+
+def deal_keyboard(offer_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Подтвердить передачу",
+                callback_data=f"deal:transfer:{offer_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="✖️ Выйти",
+                callback_data="nav:exit",
+            )
+        ],
+    ])
+
+
+# ============================================================
+# MESSAGE HELPERS
+# ============================================================
+
+async def edit_or_send(message: Message, text: str, keyboard=None):
+    try:
+        return await message.edit_text(
+            text,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).lower():
+            return message
+
+        return await message.answer(
+            text,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
+
+
+async def safe_delete_message(message: Message):
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        pass
+
+
+async def safe_answer(call: CallbackQuery, text=None, alert=False):
+    try:
+        await call.answer(text=text, show_alert=alert)
+    except TelegramBadRequest:
+        pass
+
+
+async def notify_user(user_id, text, keyboard=None):
+    try:
+        await bot.send_message(
+            user_id,
+            text,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
+    except (TelegramForbiddenError, TelegramBadRequest):
+        logger.warning("Не удалось отправить сообщение пользователю %s", user_id)
+
+
+# ============================================================
+# START
+# ============================================================
+
+@dp.message(CommandStart())
+async def start(message: Message, state: FSMContext):
+    register_user(message.from_user)
+    await state.clear()
+
+    text = (
+        f"{E_WELCOME} <b>Добро пожаловать в Telegram Offers!</b>\n\n"
+        "Тут вы можете предложить оффер человеку.\n\n"
+        "<i>Тестовый режим: реальные платежи не выполняются, "
+        "средства не резервируются, а передача NFT не проверяется.</i>"
+    )
+
+    await message.answer(text, reply_markup=main_keyboard())
+
+
+@dp.message(Command("cancel"))
+async def cancel_command(message: Message, state: FSMContext):
+    await state.clear()
+
+    await message.answer(
+        "Действие отменено.",
+        reply_markup=main_keyboard(),
+    )
+
+
+@dp.callback_query(F.data == "nav:exit")
+async def exit_section(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+
+    await edit_or_send(
+        call.message,
+        f"{E_WELCOME} <b>Telegram Offers</b>\n\n"
+        "Вы вернулись в главное меню.",
+        main_keyboard(),
+    )
+
+    await safe_answer(call)
+
+
+# ============================================================
+# OFFER CREATION
+# ============================================================
+
+@dp.callback_query(F.data == "offer:create")
+async def offer_create(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.set_state(OfferForm.username)
+
+    await edit_or_send(
+        call.message,
+        f"{E_OFFER} <b>Новое предложение</b>\n\n"
+        "Введите username получателя, например <code>@username</code>.\n\n"
+        "Получатель должен хотя бы раз запустить этого бота.",
+        exit_keyboard(),
+    )
+
+    await safe_answer(call)
+
+
+@dp.message(OfferForm.username)
+async def offer_username(message: Message, state: FSMContext):
+    register_user(message.from_user)
+
+    username = (message.text or "").strip()
+
+    if not re.fullmatch(r"@?[A-Za-z0-9_]{5,32}", username):
+        await message.answer(
+            "❌ Некорректный username. Попробуйте ещё раз.",
+            reply_markup=exit_keyboard(),
+        )
+        return
+
+    recipient = find_user(username)
+
+    if recipient is None:
+        await message.answer(
+            "❌ Пользователь не найден в базе бота.\n\n"
+            "Попросите его открыть бота и нажать /start.",
+            reply_markup=exit_keyboard(),
+        )
+        return
+
+    if recipient["user_id"] == message.from_user.id:
+        await message.answer(
+            "Нельзя отправить оффер самому себе.",
+            reply_markup=exit_keyboard(),
+        )
+        return
+
+    await state.update_data(
+        recipient_id=recipient["user_id"],
+        recipient_username=recipient["username"] or username.lstrip("@"),
+    )
+
+    await state.set_state(OfferForm.currency)
+
+    await message.answer(
+        "<b>Выберите валюту оффера</b>",
+        reply_markup=currency_keyboard(),
+    )
+
+
+@dp.callback_query(OfferForm.currency, F.data.startswith("currency:"))
+async def offer_currency(call: CallbackQuery, state: FSMContext):
+    currency_key = call.data.split(":")[1]
+
+    if currency_key == "stars":
+        currency = "Stars"
+        icon = E_STARS
+    elif currency_key == "gram":
+        currency = "Gram"
+        icon = E_GRAM
+    else:
+        await safe_answer(call, "Неизвестная валюта.", True)
+        return
+
+    await state.update_data(
+        currency=currency,
+        currency_emoji=icon,
+    )
+
+    await state.set_state(OfferForm.amount)
+
+    await edit_or_send(
+        call.message,
+        f"{icon} <b>Стоимость оффера</b>\n\n"
+        f"Введите целое количество {currency}.\n"
+        "Например: <code>100</code>",
+        exit_keyboard(),
+    )
+
+    await safe_answer(call)
+
+
+@dp.message(OfferForm.amount)
+async def offer_amount(message: Message, state: FSMContext):
+    value = (message.text or "").strip()
+
+    if not value.isdigit():
+        await message.answer(
+            "Введите положительное целое число.",
+            reply_markup=exit_keyboard(),
+        )
+        return
+
+    amount = int(value)
+
+    if not 1 <= amount <= 1_000_000_000:
+        await message.answer(
+            "Сумма должна быть от 1 до 1 000 000 000.",
+            reply_markup=exit_keyboard(),
+        )
+        return
+
+    await state.update_data(amount=amount)
+    await state.set_state(OfferForm.gift_url)
+
+    await message.answer(
+        f"{E_OFFER} <b>Ссылка на подарок</b>\n\n"
+        "Отправьте ссылку на подарок Telegram.",
+        reply_markup=exit_keyboard(),
+    )
+
+
+@dp.message(OfferForm.gift_url)
+async def offer_gift_url(message: Message, state: FSMContext):
+    url = (message.text or "").strip()
+
+    if not re.fullmatch(
+        r"https?://\S+|(?:t\.me|telegram\.me)/\S+",
+        url,
+        flags=re.IGNORECASE,
+    ):
+        await message.answer(
+            "Отправьте корректную ссылку на подарок.",
+            reply_markup=exit_keyboard(),
+        )
+        return
+
+    if not url.lower().startswith("http"):
+        url = "https://" + url
+
+    await state.update_data(gift_url=url)
+    await state.set_state(OfferForm.confirm)
+
+    data = await state.get_data()
+
+    text = (
+        "<b>Подтверждение оффера</b>\n\n"
+        f"Получатель: @{escape(data['recipient_username'])}\n"
+        f"Стоимость: {data['amount']} "
+        f"{data['currency_emoji']} {data['currency']}\n"
+        f"Подарок: <a href=\"{escape(url, quote=True)}\">Открыть подарок</a>\n\n"
+        "После подтверждения предложение отправится получателю.\n"
+        "<i>Это тестовый оффер. Реальная оплата не производится.</i>"
+    )
+
+    await message.answer(
+        text,
+        reply_markup=confirm_offer_keyboard(),
+        disable_web_page_preview=True,
+    )
+
+
+@dp.callback_query(F.data == "offer:confirm")
+async def offer_confirm(call: CallbackQuery, state: FSMContext):
+    if await state.get_state() != OfferForm.confirm.state:
+        await safe_answer(
+            call,
+            "Сессия истекла. Создайте оффер заново.",
+            True,
+        )
+        return
+
+    data = await state.get_data()
+    recipient = get_user(data["recipient_id"])
+
+    if recipient is None:
+        await state.clear()
+        await safe_answer(call, "Получатель не найден.", True)
+        return
+
+    code, offer_id = create_offer(
+        sender_id=call.from_user.id,
+        recipient=recipient,
+        currency=data["currency"],
+        amount=data["amount"],
+        gift_url=data["gift_url"],
+    )
+
+    await state.clear()
+
+    sender_username = call.from_user.username
+    sender = (
+        "@" + sender_username
+        if sender_username
+        else f"ID {call.from_user.id}"
+    )
+
+    text = (
+        f"<b>Вам поступило предложение!</b>\n\n"
+        f"Пользователь {escape(sender)} предлагает "
+        f"{data['amount']} {data['currency_emoji']} "
+        f"{data['currency']} за подарок:\n"
+        f'<a href="{escape(data["gift_url"], quote=True)}">Открыть подарок</a>\n\n'
+        f"Номер оффера: <code>{code}</code>\n\n"
+        "<i>Тестовый режим: средства не зарезервированы.</i>"
+    )
+
+    try:
+        await bot.send_message(
+            recipient["user_id"],
+            text,
+            reply_markup=incoming_offer_keyboard(offer_id),
+            disable_web_page_preview=True,
+        )
+    except (TelegramForbiddenError, TelegramBadRequest):
+        update_offer(offer_id, "delivery_failed")
+
+        await edit_or_send(
+            call.message,
+            "❌ Не удалось доставить оффер. "
+            "Получатель должен открыть бота и нажать /start.",
+            main_keyboard(),
+        )
+
+        await safe_answer(call)
+        return
+
+    await edit_or_send(
+        call.message,
+        "✅ <b>Оффер отправлен!</b>\n\n"
+        f"Номер: <code>{code}</code>\n"
+        f"Получатель: @{escape(data['recipient_username'])}",
+        main_keyboard(),
+    )
+
+    await safe_answer(call)
+
+
+# ============================================================
+# REJECT OFFER
+# ============================================================
+
+@dp.callback_query(F.data.startswith("incoming:reject:"))
+async def reject_offer(call: CallbackQuery):
+    offer_id = int(call.data.rsplit(":", 1)[1])
+    offer = get_offer(offer_id)
+
+    if offer is None or offer["recipient_id"] != call.from_user.id:
+        await safe_answer(call, "Оффер не найден.", True)
+        return
+
+    if offer["status"] != "pending":
+        await safe_answer(call, "Оффер уже обработан.", True)
+        return
+
+    update_offer(offer_id, "rejected")
+    await safe_delete_message(call.message)
+
+    await notify_user(
+        offer["sender_id"],
+        f"❌ Ваш оффер <code>{offer['code']}</code> отклонён.",
+        main_keyboard(),
+    )
+
+    await safe_answer(call)
+
+
+# ============================================================
+# ACCEPT OFFER
+# ============================================================
+
+@dp.callback_query(F.data.startswith("incoming:accept:"))
+async def accept_offer(call: CallbackQuery):
+    offer_id = int(call.data.rsplit(":", 1)[1])
+    offer = get_offer(offer_id)
+
+    if offer is None or offer["recipient_id"] != call.from_user.id:
+        await safe_answer(call, "Оффер не найден.", True)
+        return
+
+    if offer["status"] != "pending":
+        await safe_answer(call, "Оффер уже обработан.", True)
+        return
+
+    update_offer(offer_id, "accepted")
+
+    warning = (
+        "<b>Внимание!</b>\n\n"
+        "Следуйте инструкциям, чтобы завершить тестовую сделку.\n\n"
+        "Никакие реальные средства не зарезервированы. "
+        "Бот не проверяет блокчейн и не гарантирует получение оплаты.\n\n"
+        "Нажмите «ОК», если вы прочитали это предупреждение."
+    )
+
+    await edit_or_send(
+        call.message,
+        warning,
+        warning_keyboard(offer_id),
+    )
+
+    await safe_answer(call)
+
+    await notify_user(
+        offer["sender_id"],
+        f"✅ Получатель принял ваш оффер <code>{offer['code']}</code>.\n"
+        "Сделка перешла в тестовый режим.",
+        main_keyboard(),
+    )
+
+
+# ============================================================
+# DEAL CONFIRMATION
+# ============================================================
+
+@dp.callback_query(F.data.startswith("deal:warning_ok:"))
+async def deal_warning_ok(call: CallbackQuery):
+    offer_id = int(call.data.rsplit(":", 1)[1])
+    offer = get_offer(offer_id)
+
+    if offer is None or offer["recipient_id"] != call.from_user.id:
+        await safe_answer(call, "Сделка не найдена.", True)
+        return
+
+    if offer["status"] != "accepted":
+        await safe_answer(call, "Сделка уже обработана.", True)
+        return
+
+    deal_code = generate_deal_code()
+    update_offer(offer_id, "deal_open", deal_code)
+
+    icon = E_STARS if offer["currency"] == "Stars" else E_GRAM
+    sender = get_user(offer["sender_id"])
+
+    buyer = (
+        "@" + sender["username"]
+        if sender and sender["username"]
+        else f"ID {offer['sender_id']}"
+    )
+
+    text = (
+        "<b>Сделка по NFT</b>\n\n"
+        f"Заказ <code>#{deal_code}</code>\n\n"
+        f"Стоимость предложения: {offer['amount']} "
+        f"{icon} {offer['currency']}.\n\n"
+        "<b>Статус:</b> Тестовая сделка открыта.\n"
+        "<b>Эскроу:</b> Не подключён. Средства не зарезервированы.\n\n"
+        "<b>Инструкция:</b>\n\n"
+        f"1. Покупатель: {escape(buyer)}.\n"
+        "2. Откройте ссылку на подарок.\n"
+        "3. Если хотите продолжить, используйте официальный "
+        "интерфейс Telegram для передачи подарка.\n\n"
+        f'<a href="{escape(offer["gift_url"], quote=True)}">Открыть подарок</a>\n\n'
+        f"{E_CLOCK} Подтверждение в боте не доказывает передачу NFT "
+        "и не приводит к автоматическому начислению средств."
+    )
+
+    await edit_or_send(
+        call.message,
+        text,
+        deal_keyboard(offer_id),
+    )
+
+    await safe_answer(call)
+
+    await notify_user(
+        offer["sender_id"],
+        f"🧾 Сделка <code>#{deal_code}</code> открыта.\n"
+        "Тестовый режим: средства не резервируются.",
+        main_keyboard(),
+    )
+
+
+# ============================================================
+# TRANSFER STATUS
+# ============================================================
+
+@dp.callback_query(F.data.startswith("deal:transfer:"))
+async def deal_transfer(call: CallbackQuery):
+    offer_id = int(call.data.rsplit(":", 1)[1])
+    offer = get_offer(offer_id)
+
+    if offer is None or offer["recipient_id"] != call.from_user.id:
+        await safe_answer(call, "Сделка не найдена.", True)
+        return
+
+    if offer["status"] != "deal_open":
+        await safe_answer(
+            call,
+            "Сделка уже отправлена на проверку или закрыта.",
+            True,
+        )
+        return
+
+    update_offer(offer_id, "review")
+
+    text = (
+        "<b>🔎 Передача ожидает проверки</b>\n\n"
+        f"Заказ: <code>#{offer['deal_code']}</code>\n"
+        f"Стоимость: {offer['amount']} {offer['currency']}\n\n"
+        "Статус: <b>Ожидает проверки</b>\n\n"
+        "Это демонстрационный статус. Бот не проверяет "
+        "фактическую передачу NFT и не выполняет выплаты."
+    )
+
+    await edit_or_send(
+        call.message,
+        text,
+        main_keyboard(),
+    )
+
+    await safe_answer(
+        call,
+        "Статус изменён на «Ожидает проверки».",
+        True,
+    )
+
+    await notify_user(
+        offer["sender_id"],
+        f"🔎 По сделке <code>#{offer['deal_code']}</code> "
+        "установлен статус «Ожидает проверки».\n\n"
+        "Передача подарка и оплата автоматически не проверяются.",
+        main_keyboard(),
+    )
+
+
+# ============================================================
+# FALLBACK
+# ============================================================
+
+@dp.message()
+async def fallback(message: Message):
+    register_user(message.from_user)
+
+    await message.answer(
+        "Используйте меню бота для навигации.\n\n"
+        "Чтобы начать заново, отправьте /start.",
+        reply_markup=main_keyboard(),
+    )
+
+
+# ============================================================
+# START BOT
+# ============================================================
+
+async def main():
+    if BOT_TOKEN == "ВСТАВЬ_СЮДА_ТОКЕН":
+        raise RuntimeError(
+            "Укажи токен бота в BOT_TOKEN."
+        )
+
+    logger.info("Telegram Offers запущен")
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    finally:
+        db.close()
