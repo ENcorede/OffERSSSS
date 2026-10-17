@@ -26,16 +26,16 @@ from aiogram.types import (
 
 
 # ============================================================
-# CONFIGURATION
+# CONFIG
 # ============================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ВСТАВЬ_СЮДА_ТОКЕН")
 DB_PATH = "telegram_offers.db"
 
 ADMIN_IDS = {
-    int(value.strip())
-    for value in os.getenv("ADMIN_IDS", "").split(",")
-    if value.strip().isdigit()
+    int(x.strip())
+    for x in os.getenv("ADMIN_IDS", "").split(",")
+    if x.strip().isdigit()
 }
 
 logging.basicConfig(level=logging.INFO)
@@ -63,7 +63,12 @@ E_REJECT = emoji("5985346521103604145", "❌")
 E_ACCEPT = emoji("5985596818912712352", "✅")
 E_STARS = emoji("5920281855378068765", "⭐")
 E_GRAM = emoji("5303250111852228815", "💎")
+E_RUB = emoji("5328309412073335328", "₽")
+E_USD = emoji("5283232570660634549", "$")
 E_CLOCK = emoji("5778605968208170641", "🕒")
+
+E_ACCEPT_BUTTON = "5985596818912712352"
+E_REJECT_BUTTON = "5985346521103604145"
 
 
 # ============================================================
@@ -91,7 +96,8 @@ CREATE TABLE IF NOT EXISTS offers (
     recipient_username TEXT,
     currency TEXT NOT NULL,
     amount INTEGER NOT NULL,
-    gift_url TEXT NOT NULL,
+    gift_url TEXT NOT NULL DEFAULT '',
+    gift_urls TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
     deal_code TEXT UNIQUE,
     created_at TEXT NOT NULL,
@@ -101,18 +107,20 @@ CREATE TABLE IF NOT EXISTS offers (
 )
 """)
 
-# Миграция для существующей базы данных.
-existing_columns = {
+columns = {
     row["name"]
     for row in db.execute("PRAGMA table_info(offers)").fetchall()
 }
 
-for column, declaration in (
-    ("reviewed_by", "INTEGER"),
-    ("reviewed_at", "TEXT"),
-    ("review_comment", "TEXT"),
-):
-    if column not in existing_columns:
+migrations = {
+    "gift_urls": "TEXT NOT NULL DEFAULT ''",
+    "reviewed_by": "INTEGER",
+    "reviewed_at": "TEXT",
+    "review_comment": "TEXT",
+}
+
+for column, declaration in migrations.items():
+    if column not in columns:
         db.execute(
             f"ALTER TABLE offers ADD COLUMN {column} {declaration}"
         )
@@ -129,9 +137,7 @@ def register_user(user):
         return
 
     db.execute("""
-        INSERT INTO users (
-            user_id, username, first_name, joined_at
-        )
+        INSERT INTO users (user_id, username, first_name, joined_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
             username = excluded.username,
@@ -142,8 +148,14 @@ def register_user(user):
         user.first_name or "",
         now_iso(),
     ))
-
     db.commit()
+
+
+def get_user(user_id):
+    return db.execute(
+        "SELECT * FROM users WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
 
 
 def find_user(username):
@@ -156,21 +168,15 @@ def find_user(username):
     """, (username,)).fetchone()
 
 
-def get_user(user_id):
-    return db.execute(
-        "SELECT * FROM users WHERE user_id = ?",
-        (user_id,),
-    ).fetchone()
-
-
 def create_offer(
     sender_id,
     recipient,
     currency,
     amount,
-    gift_url,
+    gift_urls,
 ):
     code = secrets.token_hex(5).upper()
+    urls_text = "\n".join(gift_urls)
 
     cur = db.execute("""
         INSERT INTO offers (
@@ -181,10 +187,11 @@ def create_offer(
             currency,
             amount,
             gift_url,
+            gift_urls,
             status,
             created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
     """, (
         code,
         sender_id,
@@ -192,12 +199,12 @@ def create_offer(
         recipient["username"],
         currency,
         amount,
-        gift_url,
+        gift_urls[0],
+        urls_text,
         now_iso(),
     ))
 
     db.commit()
-
     return code, cur.lastrowid
 
 
@@ -206,6 +213,16 @@ def get_offer(offer_id):
         "SELECT * FROM offers WHERE id = ?",
         (offer_id,),
     ).fetchone()
+
+
+def get_gift_urls(offer):
+    raw = offer["gift_urls"] if offer["gift_urls"] else offer["gift_url"]
+
+    return [
+        item.strip()
+        for item in raw.splitlines()
+        if item.strip()
+    ]
 
 
 def update_offer(
@@ -236,7 +253,6 @@ def update_offer(
         review_comment,
         offer_id,
     ))
-
     db.commit()
 
 
@@ -244,20 +260,40 @@ def generate_deal_code():
     alphabet = string.ascii_uppercase + string.digits
 
     while True:
-        suffix = "".join(
-            secrets.choice(alphabet)
-            for _ in range(8)
+        code = "TG-" + "".join(
+            secrets.choice(alphabet) for _ in range(8)
         )
 
-        code = "TG-" + suffix
-
-        exists = db.execute(
+        if not db.execute(
             "SELECT 1 FROM offers WHERE deal_code = ?",
             (code,),
-        ).fetchone()
-
-        if not exists:
+        ).fetchone():
             return code
+
+
+def currency_icon(currency):
+    return {
+        "Stars": E_STARS,
+        "Gram": E_GRAM,
+        "RUB": E_RUB,
+        "USD": E_USD,
+    }.get(currency, "")
+
+
+def display_user(user_id):
+    user = get_user(user_id)
+
+    if user and user["username"]:
+        return "@" + escape(user["username"])
+
+    return f"ID <code>{user_id}</code>"
+
+
+def gift_list_html(urls):
+    return "\n".join(
+        f'{index}. <a href="{escape(url, quote=True)}">Открыть подарок</a>'
+        for index, url in enumerate(urls, 1)
+    )
 
 
 # ============================================================
@@ -268,7 +304,7 @@ class OfferForm(StatesGroup):
     username = State()
     currency = State()
     amount = State()
-    gift_url = State()
+    gifts = State()
     confirm = State()
 
 
@@ -287,7 +323,7 @@ def main_keyboard():
                 text="Предложить",
                 callback_data="offer:create",
             )
-        ],
+        ]
     ])
 
 
@@ -298,7 +334,7 @@ def exit_keyboard():
                 text="Выйти",
                 callback_data="nav:exit",
             )
-        ],
+        ]
     ])
 
 
@@ -316,10 +352,20 @@ def currency_keyboard():
         ],
         [
             InlineKeyboardButton(
+                text="Рубли",
+                callback_data="currency:rub",
+            ),
+            InlineKeyboardButton(
+                text="Доллары",
+                callback_data="currency:usd",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
                 text="Выйти",
                 callback_data="nav:exit",
             )
-        ],
+        ]
     ])
 
 
@@ -342,7 +388,7 @@ def confirm_offer_keyboard():
                 text="Выйти",
                 callback_data="nav:exit",
             )
-        ],
+        ]
     ])
 
 
@@ -350,12 +396,14 @@ def incoming_offer_keyboard(offer_id):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="Отклонить",
-                callback_data=f"incoming:reject:{offer_id}",
+                text="Принять",
+                icon_custom_emoji_id=E_ACCEPT_BUTTON,
+                callback_data=f"incoming:accept:{offer_id}",
             ),
             InlineKeyboardButton(
-                text="Принять",
-                callback_data=f"incoming:accept:{offer_id}",
+                text="Отклонить",
+                icon_custom_emoji_id=E_REJECT_BUTTON,
+                callback_data=f"incoming:reject:{offer_id}",
             ),
         ]
     ])
@@ -366,7 +414,7 @@ def warning_keyboard(offer_id):
         [
             InlineKeyboardButton(
                 text="Продолжить",
-                callback_data=f"deal:warning_ok:{offer_id}",
+                callback_data=f"deal:continue:{offer_id}",
             )
         ],
         [
@@ -374,7 +422,7 @@ def warning_keyboard(offer_id):
                 text="Выйти",
                 callback_data="nav:exit",
             )
-        ],
+        ]
     ])
 
 
@@ -391,7 +439,7 @@ def deal_keyboard(offer_id):
                 text="Выйти",
                 callback_data="nav:exit",
             )
-        ],
+        ]
     ])
 
 
@@ -414,16 +462,16 @@ def admin_comment_keyboard(offer_id):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="Без комментария",
-                callback_data=f"admin:reject_no_comment:{offer_id}",
+                text="Отклонить без комментария",
+                callback_data=f"admin:reject_empty:{offer_id}",
             )
         ],
         [
             InlineKeyboardButton(
-                text="Отмена",
+                text="Выйти",
                 callback_data="nav:exit",
             )
-        ],
+        ]
     ])
 
 
@@ -431,18 +479,13 @@ def admin_comment_keyboard(offer_id):
 # MESSAGE HELPERS
 # ============================================================
 
-async def edit_or_send(
-    message: Message,
-    text: str,
-    keyboard=None,
-):
+async def edit_or_send(message, text, keyboard=None):
     try:
         return await message.edit_text(
             text,
             reply_markup=keyboard,
             disable_web_page_preview=True,
         )
-
     except TelegramBadRequest as exc:
         if "message is not modified" in str(exc).lower():
             return message
@@ -454,32 +497,14 @@ async def edit_or_send(
         )
 
 
-async def safe_delete_message(message: Message):
+async def safe_answer(call, text=None, alert=False):
     try:
-        await message.delete()
+        await call.answer(text=text, show_alert=alert)
     except TelegramBadRequest:
         pass
 
 
-async def safe_answer(
-    call: CallbackQuery,
-    text=None,
-    alert=False,
-):
-    try:
-        await call.answer(
-            text=text,
-            show_alert=alert,
-        )
-    except TelegramBadRequest:
-        pass
-
-
-async def notify_user(
-    user_id,
-    text,
-    keyboard=None,
-):
+async def notify_user(user_id, text, keyboard=None):
     try:
         await bot.send_message(
             user_id,
@@ -488,30 +513,13 @@ async def notify_user(
             disable_web_page_preview=True,
         )
         return True
-
     except (TelegramForbiddenError, TelegramBadRequest):
-        logger.warning(
-            "Не удалось отправить сообщение пользователю %s",
-            user_id,
-        )
+        logger.warning("Не удалось уведомить пользователя %s", user_id)
         return False
 
 
-def display_user(user_id):
-    user = get_user(user_id)
-
-    if user and user["username"]:
-        return "@" + escape(user["username"])
-
-    return f"ID <code>{user_id}</code>"
-
-
-def currency_icon(currency):
-    return E_STARS if currency == "Stars" else E_GRAM
-
-
 # ============================================================
-# START
+# START / NAVIGATION
 # ============================================================
 
 @dp.message(CommandStart())
@@ -519,37 +527,26 @@ async def start(message: Message, state: FSMContext):
     register_user(message.from_user)
     await state.clear()
 
-    text = (
+    await message.answer(
         f"{E_WELCOME} <b>Telegram Offers</b>\n\n"
         "Создавайте предложения, договаривайтесь о стоимости "
-        "подарков и отслеживайте состояние сделок."
-    )
-
-    await message.answer(
-        text,
+        "подарков и отслеживайте состояние сделок.",
         reply_markup=main_keyboard(),
     )
 
 
 @dp.message(Command("cancel"))
-async def cancel_command(
-    message: Message,
-    state: FSMContext,
-):
+async def cancel_command(message: Message, state: FSMContext):
     await state.clear()
 
     await message.answer(
-        f"{E_WELCOME} <b>Действие отменено</b>\n\n"
-        "Вы вернулись в главное меню.",
+        f"{E_WELCOME} <b>Действие отменено</b>",
         reply_markup=main_keyboard(),
     )
 
 
 @dp.callback_query(F.data == "nav:exit")
-async def exit_section(
-    call: CallbackQuery,
-    state: FSMContext,
-):
+async def exit_section(call: CallbackQuery, state: FSMContext):
     await state.clear()
 
     await edit_or_send(
@@ -563,23 +560,19 @@ async def exit_section(
 
 
 # ============================================================
-# CREATE OFFER
+# OFFER CREATION
 # ============================================================
 
 @dp.callback_query(F.data == "offer:create")
-async def offer_create(
-    call: CallbackQuery,
-    state: FSMContext,
-):
+async def offer_create(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(OfferForm.username)
 
     await edit_or_send(
         call.message,
         f"{E_OFFER} <b>Новое предложение</b>\n\n"
-        "Введите username получателя, например "
-        "<code>@username</code>.\n\n"
-        "Получатель должен хотя бы раз запустить этого бота.",
+        "Введите username получателя, например <code>@username</code>.\n\n"
+        "Получатель должен хотя бы раз запустить бота.",
         exit_keyboard(),
     )
 
@@ -587,18 +580,11 @@ async def offer_create(
 
 
 @dp.message(OfferForm.username)
-async def offer_username(
-    message: Message,
-    state: FSMContext,
-):
+async def offer_username(message: Message, state: FSMContext):
     register_user(message.from_user)
-
     username = (message.text or "").strip()
 
-    if not re.fullmatch(
-        r"@?[A-Za-z0-9_]{5,32}",
-        username,
-    ):
+    if not re.fullmatch(r"@?[A-Za-z0-9_]{5,32}", username):
         await message.answer(
             "Некорректный username. Попробуйте ещё раз.",
             reply_markup=exit_keyboard(),
@@ -609,8 +595,7 @@ async def offer_username(
 
     if recipient is None:
         await message.answer(
-            "Пользователь не найден.\n\n"
-            "Попросите его открыть бота и нажать /start.",
+            "Пользователь не найден. Попросите его запустить бота.",
             reply_markup=exit_keyboard(),
         )
         return
@@ -624,9 +609,7 @@ async def offer_username(
 
     await state.update_data(
         recipient_id=recipient["user_id"],
-        recipient_username=(
-            recipient["username"] or username.lstrip("@")
-        ),
+        recipient_username=recipient["username"] or username.lstrip("@"),
     )
 
     await state.set_state(OfferForm.currency)
@@ -637,31 +620,23 @@ async def offer_username(
     )
 
 
-@dp.callback_query(
-    OfferForm.currency,
-    F.data.startswith("currency:"),
-)
-async def offer_currency(
-    call: CallbackQuery,
-    state: FSMContext,
-):
-    currency_key = call.data.split(":")[1]
+@dp.callback_query(OfferForm.currency, F.data.startswith("currency:"))
+async def offer_currency(call: CallbackQuery, state: FSMContext):
+    currencies = {
+        "stars": ("Stars", E_STARS),
+        "gram": ("Gram", E_GRAM),
+        "rub": ("RUB", E_RUB),
+        "usd": ("USD", E_USD),
+    }
 
-    if currency_key == "stars":
-        currency = "Stars"
-        icon = E_STARS
+    key = call.data.split(":")[1]
+    selected = currencies.get(key)
 
-    elif currency_key == "gram":
-        currency = "Gram"
-        icon = E_GRAM
-
-    else:
-        await safe_answer(
-            call,
-            "Неизвестная валюта.",
-            True,
-        )
+    if not selected:
+        await safe_answer(call, "Неизвестная валюта.", True)
         return
+
+    currency, icon = selected
 
     await state.update_data(
         currency=currency,
@@ -673,7 +648,7 @@ async def offer_currency(
     await edit_or_send(
         call.message,
         f"{icon} <b>Стоимость оффера</b>\n\n"
-        f"Введите целое количество {currency}.\n"
+        f"Введите сумму в валюте {currency}.\n"
         "Например: <code>100</code>",
         exit_keyboard(),
     )
@@ -682,10 +657,7 @@ async def offer_currency(
 
 
 @dp.message(OfferForm.amount)
-async def offer_amount(
-    message: Message,
-    state: FSMContext,
-):
+async def offer_amount(message: Message, state: FSMContext):
     value = (message.text or "").strip()
 
     if not value.isdigit():
@@ -704,21 +676,33 @@ async def offer_amount(
         )
         return
 
-    await state.update_data(amount=amount)
-    await state.set_state(OfferForm.gift_url)
+    await state.update_data(amount=amount, gift_urls=[])
+    await state.set_state(OfferForm.gifts)
 
     await message.answer(
-        f"{E_OFFER} <b>Ссылка на подарок</b>\n\n"
-        "Отправьте ссылку на подарок Telegram.",
-        reply_markup=exit_keyboard(),
+        f"{E_OFFER} <b>Добавление подарков</b>\n\n"
+        "Отправьте ссылку на первый подарок.\n"
+        "После этого можно будет добавлять следующие ссылки.\n\n"
+        "Когда закончите, нажмите «Готово».",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Готово",
+                    callback_data="gifts:done",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Выйти",
+                    callback_data="nav:exit",
+                )
+            ]
+        ]),
     )
 
 
-@dp.message(OfferForm.gift_url)
-async def offer_gift_url(
-    message: Message,
-    state: FSMContext,
-):
+@dp.message(OfferForm.gifts)
+async def offer_add_gift(message: Message, state: FSMContext):
     url = (message.text or "").strip()
 
     if not re.fullmatch(
@@ -735,33 +719,101 @@ async def offer_gift_url(
     if not url.lower().startswith("http"):
         url = "https://" + url
 
-    await state.update_data(gift_url=url)
-    await state.set_state(OfferForm.confirm)
+    data = await state.get_data()
+    urls = data.get("gift_urls", [])
+
+    if url in urls:
+        await message.answer(
+            "Эта ссылка уже добавлена.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Готово",
+                        callback_data="gifts:done",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Выйти",
+                        callback_data="nav:exit",
+                    )
+                ]
+            ]),
+        )
+        return
+
+    if len(urls) >= 20:
+        await message.answer(
+            "Можно добавить не более 20 подарков в один оффер.",
+            reply_markup=exit_keyboard(),
+        )
+        return
+
+    urls.append(url)
+
+    await state.update_data(gift_urls=urls)
+
+    await message.answer(
+        f"{E_ACCEPT} Ссылка добавлена.\n\n"
+        f"Количество подарков: <b>{len(urls)}</b>\n\n"
+        "Отправьте следующую ссылку или нажмите «Готово».",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Готово",
+                    callback_data="gifts:done",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Выйти",
+                    callback_data="nav:exit",
+                )
+            ]
+        ]),
+    )
+
+
+@dp.callback_query(F.data == "gifts:done")
+async def offer_gifts_done(call: CallbackQuery, state: FSMContext):
+    if await state.get_state() != OfferForm.gifts.state:
+        await safe_answer(call, "Сессия истекла.", True)
+        return
 
     data = await state.get_data()
+    urls = data.get("gift_urls", [])
+
+    if not urls:
+        await safe_answer(
+            call,
+            "Добавьте хотя бы один подарок.",
+            True,
+        )
+        return
+
+    await state.set_state(OfferForm.confirm)
 
     text = (
         f"{E_OFFER} <b>Подтверждение оффера</b>\n\n"
         f"Получатель: @{escape(data['recipient_username'])}\n"
         f"Стоимость: {data['amount']} "
-        f"{data['currency_emoji']} {data['currency']}\n"
-        f"Подарок: <a href=\"{escape(url, quote=True)}\">"
-        "Открыть подарок</a>\n\n"
-        "Проверьте данные перед отправкой предложения."
+        f"{data['currency_emoji']} {data['currency']}\n\n"
+        f"<b>Подарки ({len(urls)}):</b>\n"
+        f"{gift_list_html(urls)}\n\n"
+        "Проверьте данные перед отправкой."
     )
 
-    await message.answer(
+    await edit_or_send(
+        call.message,
         text,
-        reply_markup=confirm_offer_keyboard(),
-        disable_web_page_preview=True,
+        confirm_offer_keyboard(),
     )
+
+    await safe_answer(call)
 
 
 @dp.callback_query(F.data == "offer:confirm")
-async def offer_confirm(
-    call: CallbackQuery,
-    state: FSMContext,
-):
+async def offer_confirm(call: CallbackQuery, state: FSMContext):
     if await state.get_state() != OfferForm.confirm.state:
         await safe_answer(
             call,
@@ -775,40 +827,39 @@ async def offer_confirm(
 
     if recipient is None:
         await state.clear()
-        await safe_answer(
-            call,
-            "Получатель не найден.",
-            True,
-        )
+        await safe_answer(call, "Получатель не найден.", True)
+        return
+
+    urls = data.get("gift_urls", [])
+
+    if not urls:
+        await safe_answer(call, "Добавьте хотя бы один подарок.", True)
         return
 
     code, offer_id = create_offer(
-        sender_id=call.from_user.id,
-        recipient=recipient,
-        currency=data["currency"],
-        amount=data["amount"],
-        gift_url=data["gift_url"],
+        call.from_user.id,
+        recipient,
+        data["currency"],
+        data["amount"],
+        urls,
     )
 
     await state.clear()
 
-    sender_username = call.from_user.username
-
     sender = (
-        "@" + escape(sender_username)
-        if sender_username
+        "@" + escape(call.from_user.username)
+        if call.from_user.username
         else f"ID <code>{call.from_user.id}</code>"
     )
 
     text = (
         f"{E_OFFER} <b>Вам поступило предложение!</b>\n\n"
-        f"Пользователь {sender} предлагает "
-        f"{data['amount']} {data['currency_emoji']} "
-        f"{data['currency']} за подарок:\n"
-        f'<a href="{escape(data["gift_url"], quote=True)}">'
-        "Открыть подарок</a>\n\n"
-        f"Номер оффера: <code>{code}</code>\n\n"
-        "Вы можете принять или отклонить предложение."
+        f"Пользователь: {sender}\n"
+        f"Стоимость: {data['amount']} "
+        f"{data['currency_emoji']} {data['currency']}\n\n"
+        f"<b>Подарки ({len(urls)}):</b>\n"
+        f"{gift_list_html(urls)}\n\n"
+        f"Номер оффера: <code>{code}</code>"
     )
 
     delivered = await notify_user(
@@ -822,8 +873,8 @@ async def offer_confirm(
 
         await edit_or_send(
             call.message,
-            f"{E_REJECT} <b>Не удалось доставить оффер</b>\n\n"
-            "Получатель должен открыть бота и нажать /start.",
+            f"{E_REJECT} Не удалось доставить оффер.\n"
+            "Получатель должен запустить бота.",
             main_keyboard(),
         )
 
@@ -834,7 +885,7 @@ async def offer_confirm(
         call.message,
         f"{E_ACCEPT} <b>Оффер отправлен</b>\n\n"
         f"Номер: <code>{code}</code>\n"
-        f"Получатель: @{escape(data['recipient_username'])}",
+        f"Количество подарков: <b>{len(urls)}</b>",
         main_keyboard(),
     )
 
@@ -847,12 +898,7 @@ async def offer_confirm(
 
 @dp.callback_query(F.data.startswith("incoming:reject:"))
 async def reject_offer(call: CallbackQuery):
-    try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
-    except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный оффер.", True)
-        return
-
+    offer_id = int(call.data.rsplit(":", 1)[1])
     offer = get_offer(offer_id)
 
     if offer is None or offer["recipient_id"] != call.from_user.id:
@@ -881,17 +927,12 @@ async def reject_offer(call: CallbackQuery):
 
 
 # ============================================================
-# ACCEPT OFFER
+# ACCEPT OFFER -> DEAL CARD IMMEDIATELY
 # ============================================================
 
 @dp.callback_query(F.data.startswith("incoming:accept:"))
 async def accept_offer(call: CallbackQuery):
-    try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
-    except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный оффер.", True)
-        return
-
+    offer_id = int(call.data.rsplit(":", 1)[1])
     offer = get_offer(offer_id)
 
     if offer is None or offer["recipient_id"] != call.from_user.id:
@@ -902,54 +943,6 @@ async def accept_offer(call: CallbackQuery):
         await safe_answer(call, "Оффер уже обработан.", True)
         return
 
-    update_offer(offer_id, "accepted")
-
-    warning = (
-        f"{E_OFFER} <b>Предложение принято</b>\n\n"
-        "Перед продолжением убедитесь, что условия сделки "
-        "вам подходят.\n\n"
-        "Передача подарка и расчёт должны быть проверены "
-        "до завершения сделки."
-    )
-
-    await edit_or_send(
-        call.message,
-        warning,
-        warning_keyboard(offer_id),
-    )
-
-    await notify_user(
-        offer["sender_id"],
-        f"{E_ACCEPT} Получатель принял ваш оффер "
-        f"<code>{offer['code']}</code>.",
-        main_keyboard(),
-    )
-
-    await safe_answer(call)
-
-
-# ============================================================
-# OPEN DEAL
-# ============================================================
-
-@dp.callback_query(F.data.startswith("deal:warning_ok:"))
-async def deal_warning_ok(call: CallbackQuery):
-    try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
-    except (ValueError, IndexError):
-        await safe_answer(call, "Некорректная сделка.", True)
-        return
-
-    offer = get_offer(offer_id)
-
-    if offer is None or offer["recipient_id"] != call.from_user.id:
-        await safe_answer(call, "Сделка не найдена.", True)
-        return
-
-    if offer["status"] != "accepted":
-        await safe_answer(call, "Сделка уже обработана.", True)
-        return
-
     deal_code = generate_deal_code()
 
     update_offer(
@@ -958,24 +951,20 @@ async def deal_warning_ok(call: CallbackQuery):
         deal_code=deal_code,
     )
 
+    urls = get_gift_urls(offer)
     icon = currency_icon(offer["currency"])
-    buyer = display_user(offer["sender_id"])
 
     text = (
-        f"{E_OFFER} <b>Сделка по подарку</b>\n\n"
+        f"{E_OFFER} <b>Сделка по подаркам</b>\n\n"
         f"Заказ: <code>#{deal_code}</code>\n\n"
+        f"Покупатель: {display_user(offer['sender_id'])}\n"
         f"Стоимость предложения: {offer['amount']} "
         f"{icon} {escape(offer['currency'])}\n\n"
+        f"<b>Подарки ({len(urls)}):</b>\n"
+        f"{gift_list_html(urls)}\n\n"
         "<b>Статус:</b> Сделка открыта\n\n"
-        "<b>Порядок действий:</b>\n"
-        f"1. Покупатель: {buyer}.\n"
-        "2. Проверьте условия предложения.\n"
-        "3. После передачи подарка отправьте сделку "
-        "на проверку администраторам.\n\n"
-        f'<a href="{escape(offer["gift_url"], quote=True)}">'
-        "Открыть подарок</a>\n\n"
-        f"{E_CLOCK} После отправки заявки администраторы "
-        "проверят предоставленные сведения."
+        "После передачи подарков отправьте сделку "
+        "на проверку администраторам."
     )
 
     await edit_or_send(
@@ -986,8 +975,9 @@ async def deal_warning_ok(call: CallbackQuery):
 
     await notify_user(
         offer["sender_id"],
-        f"{E_OFFER} Сделка <code>#{deal_code}</code> открыта.\n\n"
-        "Следите за обновлением статуса.",
+        f"{E_ACCEPT} Ваш оффер принят.\n\n"
+        f"Сделка: <code>#{deal_code}</code>\n"
+        "Получатель принял предложение.",
         main_keyboard(),
     )
 
@@ -995,17 +985,12 @@ async def deal_warning_ok(call: CallbackQuery):
 
 
 # ============================================================
-# SUBMIT TRANSFER FOR REVIEW
+# SUBMIT DEAL FOR ADMIN REVIEW
 # ============================================================
 
 @dp.callback_query(F.data.startswith("deal:transfer:"))
 async def deal_transfer(call: CallbackQuery):
-    try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
-    except (ValueError, IndexError):
-        await safe_answer(call, "Некорректная сделка.", True)
-        return
-
+    offer_id = int(call.data.rsplit(":", 1)[1])
     offer = get_offer(offer_id)
 
     if offer is None or offer["recipient_id"] != call.from_user.id:
@@ -1020,45 +1005,27 @@ async def deal_transfer(call: CallbackQuery):
         )
         return
 
-    # Статус меняется до уведомления администраторов,
-    # чтобы повторные нажатия не создавали новые заявки.
     update_offer(offer_id, "review")
-
-    text = (
-        f"{E_CLOCK} <b>Передача отправлена на проверку</b>\n\n"
-        f"Заказ: <code>#{offer['deal_code']}</code>\n"
-        f"Стоимость: {offer['amount']} "
-        f"{currency_icon(offer['currency'])} "
-        f"{escape(offer['currency'])}\n\n"
-        "Статус: <b>Ожидает проверки администраторами</b>\n\n"
-        "После проверки вы получите уведомление."
-    )
 
     await edit_or_send(
         call.message,
-        text,
+        f"{E_CLOCK} <b>Передача отправлена на проверку</b>\n\n"
+        f"Заказ: <code>#{offer['deal_code']}</code>\n"
+        "Статус: <b>Ожидает проверки администраторами</b>",
         main_keyboard(),
     )
 
     await notify_user(
         offer["sender_id"],
-        f"{E_CLOCK} По сделке <code>#{offer['deal_code']}</code> "
-        "началась проверка администраторами.",
+        f"{E_CLOCK} Сделка <code>#{offer['deal_code']}</code> "
+        "отправлена на проверку администраторам.",
         main_keyboard(),
     )
 
     await notify_admins_about_review(offer_id)
 
-    await safe_answer(
-        call,
-        "Заявка отправлена администраторам.",
-        True,
-    )
+    await safe_answer(call, "Заявка отправлена администраторам.")
 
-
-# ============================================================
-# ADMIN REVIEW NOTIFICATIONS
-# ============================================================
 
 async def notify_admins_about_review(offer_id: int):
     offer = get_offer(offer_id)
@@ -1066,23 +1033,21 @@ async def notify_admins_about_review(offer_id: int):
     if offer is None or offer["status"] != "review":
         return
 
-    sender_name = display_user(offer["sender_id"])
-    recipient_name = display_user(offer["recipient_id"])
+    urls = get_gift_urls(offer)
     icon = currency_icon(offer["currency"])
 
     text = (
         f"{E_CLOCK} <b>Проверка сделки</b>\n\n"
         f"Заказ: <code>#{offer['deal_code']}</code>\n"
         f"Оффер: <code>{offer['code']}</code>\n\n"
-        f"Покупатель: {sender_name}\n"
-        f"Продавец: {recipient_name}\n"
+        f"Покупатель: {display_user(offer['sender_id'])}\n"
+        f"Продавец: {display_user(offer['recipient_id'])}\n"
         f"Стоимость: {offer['amount']} "
-        f"{icon} {escape(offer['currency'])}\n"
-        f'Подарок: <a href="{escape(offer["gift_url"], quote=True)}">'
-        "Открыть ссылку</a>\n\n"
-        "<b>Требуется проверка</b>\n"
-        "Проверьте передачу подарка по доступным сведениям "
-        "до принятия решения."
+        f"{icon} {escape(offer['currency'])}\n\n"
+        f"<b>Подарки ({len(urls)}):</b>\n"
+        f"{gift_list_html(urls)}\n\n"
+        "Проверьте сведения о передаче подарков "
+        "перед принятием решения."
     )
 
     for admin_id in ADMIN_IDS:
@@ -1100,31 +1065,14 @@ async def notify_admins_about_review(offer_id: int):
 @dp.callback_query(F.data.startswith("admin:approve:"))
 async def admin_approve(call: CallbackQuery):
     if call.from_user.id not in ADMIN_IDS:
-        await safe_answer(
-            call,
-            "Недостаточно прав.",
-            True,
-        )
+        await safe_answer(call, "Недостаточно прав.", True)
         return
 
-    try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
-    except (ValueError, IndexError):
-        await safe_answer(call, "Некорректная сделка.", True)
-        return
-
+    offer_id = int(call.data.rsplit(":", 1)[1])
     offer = get_offer(offer_id)
 
-    if offer is None:
-        await safe_answer(call, "Сделка не найдена.", True)
-        return
-
-    if offer["status"] != "review":
-        await safe_answer(
-            call,
-            "Эта заявка уже обработана.",
-            True,
-        )
+    if offer is None or offer["status"] != "review":
+        await safe_answer(call, "Заявка уже обработана.", True)
         return
 
     update_offer(
@@ -1136,34 +1084,20 @@ async def admin_approve(call: CallbackQuery):
     await edit_or_send(
         call.message,
         f"{E_ACCEPT} <b>Сделка подтверждена</b>\n\n"
-        f"Заказ: <code>#{offer['deal_code']}</code>\n"
-        f"Администратор: <code>{call.from_user.id}</code>",
+        f"Заказ: <code>#{offer['deal_code']}</code>",
         None,
     )
 
     result = (
         f"{E_ACCEPT} <b>Проверка завершена</b>\n\n"
-        f"Заказ: <code>#{offer['deal_code']}</code>\n\n"
+        f"Заказ: <code>#{offer['deal_code']}</code>\n"
         "Администратор подтвердил завершение сделки."
     )
 
-    await notify_user(
-        offer["sender_id"],
-        result,
-        main_keyboard(),
-    )
+    await notify_user(offer["sender_id"], result, main_keyboard())
+    await notify_user(offer["recipient_id"], result, main_keyboard())
 
-    await notify_user(
-        offer["recipient_id"],
-        result,
-        main_keyboard(),
-    )
-
-    await safe_answer(
-        call,
-        "Сделка подтверждена.",
-        True,
-    )
+    await safe_answer(call, "Сделка подтверждена.")
 
 
 # ============================================================
@@ -1171,41 +1105,27 @@ async def admin_approve(call: CallbackQuery):
 # ============================================================
 
 @dp.callback_query(F.data.startswith("admin:reject:"))
-async def admin_reject(call: CallbackQuery):
+async def admin_reject(call: CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS:
-        await safe_answer(
-            call,
-            "Недостаточно прав.",
-            True,
-        )
+        await safe_answer(call, "Недостаточно прав.", True)
         return
 
-    try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
-    except (ValueError, IndexError):
-        await safe_answer(call, "Некорректная сделка.", True)
-        return
-
+    offer_id = int(call.data.rsplit(":", 1)[1])
     offer = get_offer(offer_id)
 
-    if offer is None:
-        await safe_answer(call, "Сделка не найдена.", True)
+    if offer is None or offer["status"] != "review":
+        await safe_answer(call, "Заявка уже обработана.", True)
         return
 
-    if offer["status"] != "review":
-        await safe_answer(
-            call,
-            "Эта заявка уже обработана.",
-            True,
-        )
-        return
+    await state.clear()
+    await state.update_data(review_offer_id=offer_id)
+    await state.set_state(AdminReviewForm.comment)
 
     await edit_or_send(
         call.message,
-        f"{E_REJECT} <b>Отклонение заявки</b>\n\n"
+        f"{E_REJECT} <b>Отклонение сделки</b>\n\n"
         f"Заказ: <code>#{offer['deal_code']}</code>\n\n"
-        "Укажите причину следующим сообщением или "
-        "отклоните заявку без комментария.",
+        "Отправьте причину отклонения следующим сообщением.",
         admin_comment_keyboard(offer_id),
     )
 
@@ -1231,53 +1151,35 @@ async def finalize_admin_rejection(
 
     text = (
         f"{E_REJECT} <b>Сделка отклонена после проверки</b>\n\n"
-        f"Заказ: <code>#{offer['deal_code']}</code>\n\n"
-        "Администраторы отклонили заявку."
+        f"Заказ: <code>#{offer['deal_code']}</code>"
     )
 
     if comment:
         text += f"\n\nПричина: {escape(comment)}"
 
-    await notify_user(
-        offer["sender_id"],
-        text,
-        main_keyboard(),
-    )
-
-    await notify_user(
-        offer["recipient_id"],
-        text,
-        main_keyboard(),
-    )
+    await notify_user(offer["sender_id"], text, main_keyboard())
+    await notify_user(offer["recipient_id"], text, main_keyboard())
 
     return True
 
 
-@dp.callback_query(
-    F.data.startswith("admin:reject_no_comment:")
-)
-async def admin_reject_no_comment(call: CallbackQuery):
+@dp.callback_query(F.data.startswith("admin:reject_empty:"))
+async def admin_reject_empty(call: CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS:
         await safe_answer(call, "Недостаточно прав.", True)
         return
 
-    try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
-    except (ValueError, IndexError):
-        await safe_answer(call, "Некорректная сделка.", True)
-        return
+    offer_id = int(call.data.rsplit(":", 1)[1])
 
     success = await finalize_admin_rejection(
         offer_id,
         call.from_user.id,
     )
 
+    await state.clear()
+
     if not success:
-        await safe_answer(
-            call,
-            "Заявка уже обработана.",
-            True,
-        )
+        await safe_answer(call, "Заявка уже обработана.", True)
         return
 
     await edit_or_send(
@@ -1286,18 +1188,11 @@ async def admin_reject_no_comment(call: CallbackQuery):
         None,
     )
 
-    await safe_answer(
-        call,
-        "Заявка отклонена.",
-        True,
-    )
+    await safe_answer(call, "Заявка отклонена.")
 
 
 @dp.message(AdminReviewForm.comment)
-async def admin_rejection_comment(
-    message: Message,
-    state: FSMContext,
-):
+async def admin_rejection_comment(message: Message, state: FSMContext):
     if message.from_user.id not in ADMIN_IDS:
         await state.clear()
         return
@@ -1305,13 +1200,20 @@ async def admin_rejection_comment(
     data = await state.get_data()
     offer_id = data.get("review_offer_id")
 
-    comment = (message.text or "").strip()
-
     if not offer_id:
         await state.clear()
         await message.answer(
             "Заявка не найдена.",
             reply_markup=main_keyboard(),
+        )
+        return
+
+    comment = (message.text or "").strip()
+
+    if not comment:
+        await message.answer(
+            "Введите причину отклонения текстом.",
+            reply_markup=exit_keyboard(),
         )
         return
 
@@ -1337,22 +1239,13 @@ async def admin_rejection_comment(
         )
         return
 
+    offer = get_offer(offer_id)
+
     await message.answer(
         f"{E_REJECT} <b>Заявка отклонена</b>\n\n"
-        f"Заказ: <code>#{get_offer(offer_id)['deal_code']}</code>",
+        f"Заказ: <code>#{offer['deal_code']}</code>",
         reply_markup=main_keyboard(),
     )
-
-
-# ============================================================
-# ADMIN REJECTION COMMENT ENTRY
-# ============================================================
-
-@dp.callback_query(F.data.startswith("admin:reject:"))
-async def admin_reject_comment_entry(call: CallbackQuery):
-    # Основной обработчик admin_reject выше уже отвечает на этот
-    # callback. Этот участок оставлен для совместимости структуры.
-    await safe_answer(call)
 
 
 # ============================================================
@@ -1365,34 +1258,34 @@ async def fallback(message: Message):
 
     await message.answer(
         f"{E_WELCOME} <b>Telegram Offers</b>\n\n"
-        "Используйте меню для навигации.\n\n"
-        "Чтобы начать заново, отправьте /start.",
+        "Используйте меню для навигации.\n"
+        "Для возврата отправьте /start.",
         reply_markup=main_keyboard(),
     )
 
 
 # ============================================================
-# START BOT
+# RUN
 # ============================================================
 
 async def main():
     if not BOT_TOKEN or BOT_TOKEN == "ВСТАВЬ_СЮДА_ТОКЕН":
         raise RuntimeError(
-            "Укажи токен бота в переменной окружения BOT_TOKEN."
+            "Укажи токен в переменной окружения BOT_TOKEN."
         )
 
     if not ADMIN_IDS:
         logger.warning(
-            "ADMIN_IDS не задан: проверять сделки будет некому."
+            "ADMIN_IDS не задан. Администраторам не будут "
+            "отправляться заявки на проверку."
         )
 
     logger.info("Telegram Offers запущен")
-
-    try:
-        await dp.start_polling(bot)
-    finally:
-        db.close()
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        db.close()
