@@ -5,6 +5,7 @@ import re
 import sqlite3
 import secrets
 import string
+
 from datetime import datetime, timezone
 from html import escape
 
@@ -48,7 +49,9 @@ logger = logging.getLogger("offers_bot")
 
 bot = Bot(
     BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    default=DefaultBotProperties(
+        parse_mode=ParseMode.HTML
+    ),
 )
 
 dp = Dispatcher(storage=MemoryStorage())
@@ -61,32 +64,90 @@ NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 # ============================================================
 
 def emoji(emoji_id: str, fallback: str = "✨") -> str:
-    return (
-        f'<tg-emoji emoji-id="{emoji_id}">'
-        f'{fallback}</tg-emoji>'
-    )
+    """Возвращает Telegram Custom Emoji в HTML."""
+    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
 
 
-E_START = emoji("5409143419593321597")
-E_MENU = emoji("5818956713507689486", "🏠")
-E_BACK = emoji("5877629862306385808", "⬅️")
-E_OFFER = emoji("5832251986635920010", "🔄")
-E_STARS = emoji("5920281855378068765", "⭐")
-E_GRAM = emoji("5303250111852228815", "💎")
-E_RUB = emoji("5328309412073335328", "₽")
-E_USD = emoji("5283232570660634549", "$")
-E_ACCEPT = emoji("5985596818912712352", "✅")
-E_REJECT = emoji("5985346521103604145", "❌")
-E_CLOCK = emoji("5778605968208170641", "🕒")
+# Новые иконки по запросу
 
-ICON_MENU = "5818956713507689486"
+ICON_MAIN_CUSTOM = "5413647564681549949"
+ICON_DEAL_CUSTOM = "5413764443626576622"
+ICON_OFFER_SENT = "5411444087544913716"
+
+
+E_START = emoji("5409143419593321597", "✨")
+
+E_MENU = emoji(ICON_MAIN_CUSTOM, "🏠")
+
+E_BACK = emoji(
+    "5877629862306385808",
+    "⬅️",
+)
+
+E_OFFER = emoji(
+    "5832251986635920010",
+    "🔄",
+)
+
+E_DEAL = emoji(
+    ICON_DEAL_CUSTOM,
+    "📄",
+)
+
+E_OFFER_SENT = emoji(
+    ICON_OFFER_SENT,
+    "📨",
+)
+
+E_STARS = emoji(
+    "5920281855378068765",
+    "⭐",
+)
+
+E_GRAM = emoji(
+    "5303250111852228815",
+    "💎",
+)
+
+E_RUB = emoji(
+    "5328309412073335328",
+    "₽",
+)
+
+E_USD = emoji(
+    "5283232570660634549",
+    "$",
+)
+
+E_ACCEPT = emoji(
+    "5985596818912712352",
+    "✅",
+)
+
+E_REJECT = emoji(
+    "5985346521103604145",
+    "❌",
+)
+
+E_CLOCK = emoji(
+    "5778605968208170641",
+    "🕒",
+)
+
+
+ICON_MENU = ICON_MAIN_CUSTOM
 ICON_BACK = "5877629862306385808"
+
 ICON_STARS = "5920281855378068765"
 ICON_GRAM = "5303250111852228815"
 ICON_RUB = "5328309412073335328"
 ICON_USD = "5283232570660634549"
+
 ICON_ACCEPT = "5985596818912712352"
 ICON_REJECT = "5985346521103604145"
+
+ICON_DEAL = ICON_DEAL_CUSTOM
+
 
 CURRENCIES = {
     "stars": ("Stars", E_STARS, ICON_STARS),
@@ -101,35 +162,36 @@ CURRENCIES = {
 # ============================================================
 
 db = sqlite3.connect(DB_PATH)
+
 db.row_factory = sqlite3.Row
 
 db.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    first_name TEXT,
-    joined_at TEXT NOT NULL
-)
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        first_name TEXT,
+        joined_at TEXT NOT NULL
+    )
 """)
 
 db.execute("""
-CREATE TABLE IF NOT EXISTS offers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    code TEXT UNIQUE NOT NULL,
-    sender_id INTEGER NOT NULL,
-    recipient_id INTEGER NOT NULL,
-    recipient_username TEXT,
-    currency TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    gift_url TEXT NOT NULL DEFAULT '',
-    gift_urls TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending',
-    deal_code TEXT UNIQUE,
-    created_at TEXT NOT NULL,
-    reviewed_by INTEGER,
-    reviewed_at TEXT,
-    review_comment TEXT
-)
+    CREATE TABLE IF NOT EXISTS offers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        sender_id INTEGER NOT NULL,
+        recipient_id INTEGER NOT NULL,
+        recipient_username TEXT,
+        currency TEXT NOT NULL,
+        amount INTEGER NOT NULL,
+        gift_url TEXT NOT NULL DEFAULT '',
+        gift_urls TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        deal_code TEXT UNIQUE,
+        created_at TEXT NOT NULL,
+        reviewed_by INTEGER,
+        reviewed_at TEXT,
+        review_comment TEXT
+    )
 """)
 
 columns = {
@@ -143,17 +205,18 @@ for col, declaration in {
     "reviewed_at": "TEXT",
     "review_comment": "TEXT",
 }.items():
+
     if col not in columns:
         db.execute(
             f"ALTER TABLE offers ADD COLUMN {col} {declaration}"
         )
 
 db.execute("""
-UPDATE offers
-SET gift_urls = gift_url
-WHERE (gift_urls IS NULL OR gift_urls = '')
-AND gift_url IS NOT NULL
-AND gift_url != ''
+    UPDATE offers
+    SET gift_urls = gift_url
+    WHERE (gift_urls IS NULL OR gift_urls = '')
+      AND gift_url IS NOT NULL
+      AND gift_url != ''
 """)
 
 db.commit()
@@ -169,7 +232,10 @@ def register_user(user):
 
     db.execute("""
         INSERT INTO users (
-            user_id, username, first_name, joined_at
+            user_id,
+            username,
+            first_name,
+            joined_at
         )
         VALUES (?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
@@ -221,7 +287,10 @@ def normalize_username(value):
 
 def valid_username(username):
     return bool(
-        re.fullmatch(r"[a-zA-Z0-9_]{5,32}", username or "")
+        re.fullmatch(
+            r"[a-zA-Z0-9_]{5,32}",
+            username or "",
+        )
     )
 
 
@@ -308,7 +377,8 @@ def update_offer(
 ):
     db.execute("""
         UPDATE offers
-        SET status = ?,
+        SET
+            status = ?,
             deal_code = COALESCE(?, deal_code),
             reviewed_by = COALESCE(?, reviewed_by),
             reviewed_at = CASE
@@ -373,19 +443,73 @@ def gift_list_html(urls):
     )
 
 
+# ============================================================
+# ТЕКСТЫ
+# ============================================================
+
+def main_menu_text():
+    return (
+        f"{E_MENU} <b>Telegram Offers</b>\n\n"
+        "Создавайте предложения, отправляйте подарки "
+        "и отслеживайте состояние сделок.\n\n"
+        "💳 <b>Средства по офферам</b>\n"
+        "Фактическое зачисление зависит от валюты "
+        "и условий расчёта по сделке. Проверяйте получение "
+        "средств непосредственно в соответствующем аккаунте."
+    )
+
+
 def build_recipient_offer_text(offer):
     sender = display_user(offer["sender_id"])
     urls = get_gift_urls(offer)
+
     icon = currency_icon(offer["currency"])
 
     return (
-        f"{E_OFFER} <b>Вам поступило предложение!</b>\n\n"
+        f"{E_OFFER_SENT} <b>Вам поступило предложение!</b>\n\n"
         f"Отправитель: {sender}\n"
         f"Стоимость: {offer['amount']} "
         f"{icon} {escape(offer['currency'])}\n\n"
         f"<b>Подарки ({len(urls)}):</b>\n"
         f"{gift_list_html(urls)}\n\n"
         f"Номер оффера: <code>{offer['code']}</code>"
+    )
+
+
+def build_accepted_deal_text(offer):
+    urls = get_gift_urls(offer)
+
+    buyer = display_user(offer["sender_id"])
+
+    icon = currency_icon(offer["currency"])
+
+    gift = (
+        f'<a href="{escape(urls[0], quote=True)}">'
+        "подарок"
+        "</a>"
+        if urls
+        else "подарок"
+    )
+
+    return (
+        f"{E_DEAL} <b>Сделка по NFT</b>\n\n"
+        f"Заказ <code>#{offer['deal_code']}</code>\n\n"
+        f"Покупатель: {buyer}\n"
+        f"Стоимость: <b>{offer['amount']} "
+        f"{icon} {escape(offer['currency'])}</b>\n\n"
+        "Проверьте условия сделки перед передачей подарка. "
+        "Сообщение бота само по себе не подтверждает оплату "
+        "или резервирование средств.\n\n"
+        "<b>Инструкция по завершению сделки:</b>\n\n"
+        f"1. Передайте подарок пользователю {buyer} "
+        "только после проверки оплаты.\n\n"
+        f"2. Нажмите <b>Transfer NFT</b> "
+        f"(Передать NFT) и выберите {gift}.\n\n"
+        "3. Подтвердите передачу подарка, если уверены "
+        "в выполнении условий сделки.\n\n"
+        "Передача NFT может быть необратимой. "
+        "Не полагайтесь на сообщения о платеже без "
+        "независимой проверки."
     )
 
 
@@ -422,9 +546,17 @@ def btn(text, callback, icon=None):
 
 
 def main_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [btn("Предложить", "offer:create", ICON_ACCEPT)]
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                btn(
+                    "Предложить",
+                    "offer:create",
+                    ICON_ACCEPT,
+                )
+            ]
+        ]
+    )
 
 
 def nav_keyboard(back_callback=None):
@@ -432,90 +564,166 @@ def nav_keyboard(back_callback=None):
 
     if back_callback:
         rows.append([
-            btn("Назад", back_callback, ICON_BACK)
+            btn(
+                "Назад",
+                back_callback,
+                ICON_BACK,
+            )
         ])
 
     rows.append([
-        btn("В меню", "nav:menu", ICON_MENU)
+        btn(
+            "В меню",
+            "nav:menu",
+            ICON_MENU,
+        )
     ])
 
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(
+        inline_keyboard=rows
+    )
 
 
 def currency_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            btn("Stars", "currency:stars", ICON_STARS),
-            btn("Gram", "currency:gram", ICON_GRAM),
-        ],
-        [
-            btn("Рубли", "currency:rub", ICON_RUB),
-            btn("Доллары", "currency:usd", ICON_USD),
-        ],
-        [
-            btn("В меню", "nav:menu", ICON_MENU)
-        ],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                btn("Stars", "currency:stars", ICON_STARS),
+                btn("Gram", "currency:gram", ICON_GRAM),
+            ],
+            [
+                btn("Рубли", "currency:rub", ICON_RUB),
+                btn("Доллары", "currency:usd", ICON_USD),
+            ],
+            [
+                btn("В меню", "nav:menu", ICON_MENU)
+            ],
+        ]
+    )
 
 
 def gifts_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [btn("Готово", "gifts:done", ICON_ACCEPT)],
-        [btn("Назад", "back:amount", ICON_BACK)],
-        [btn("В меню", "nav:menu", ICON_MENU)],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                btn("Готово", "gifts:done", ICON_ACCEPT)
+            ],
+            [
+                btn("Назад", "back:amount", ICON_BACK)
+            ],
+            [
+                btn("В меню", "nav:menu", ICON_MENU)
+            ],
+        ]
+    )
 
 
 def confirm_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [btn("Отправить оффер", "offer:confirm", ICON_ACCEPT)],
-        [btn("Назад", "back:gifts", ICON_BACK)],
-        [btn("В меню", "nav:menu", ICON_MENU)],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                btn(
+                    "Отправить оффер",
+                    "offer:confirm",
+                    ICON_ACCEPT,
+                )
+            ],
+            [
+                btn(
+                    "Назад",
+                    "back:gifts",
+                    ICON_BACK,
+                )
+            ],
+            [
+                btn(
+                    "В меню",
+                    "nav:menu",
+                    ICON_MENU,
+                )
+            ],
+        ]
+    )
 
 
 def incoming_keyboard(offer_id):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            btn("Принять", f"incoming:accept:{offer_id}", ICON_ACCEPT),
-            btn("Отклонить", f"incoming:reject:{offer_id}", ICON_REJECT),
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                btn(
+                    "Принять",
+                    f"incoming:accept:{offer_id}",
+                    ICON_ACCEPT,
+                ),
+                btn(
+                    "Отклонить",
+                    f"incoming:reject:{offer_id}",
+                    ICON_REJECT,
+                ),
+            ]
         ]
-    ])
+    )
 
 
 def deal_keyboard(offer_id):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            btn(
-                "Подтвердить передачу",
-                f"deal:transfer:{offer_id}",
-                ICON_ACCEPT,
-            )
-        ],
-        [btn("В меню", "nav:menu", ICON_MENU)],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                btn(
+                    "Подтвердить передачу",
+                    f"deal:transfer:{offer_id}",
+                    ICON_DEAL,
+                )
+            ],
+            [
+                btn(
+                    "В меню",
+                    "nav:menu",
+                    ICON_MENU,
+                )
+            ],
+        ]
+    )
 
 
 def admin_keyboard(offer_id):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            btn("Подтвердить", f"admin:approve:{offer_id}", ICON_ACCEPT),
-            btn("Отклонить", f"admin:reject:{offer_id}", ICON_REJECT),
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                btn(
+                    "Подтвердить",
+                    f"admin:approve:{offer_id}",
+                    ICON_ACCEPT,
+                ),
+                btn(
+                    "Отклонить",
+                    f"admin:reject:{offer_id}",
+                    ICON_REJECT,
+                ),
+            ]
         ]
-    ])
+    )
 
 
 def admin_reject_keyboard(offer_id):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            btn(
-                "Отклонить без причины",
-                f"admin:reject_empty:{offer_id}",
-                ICON_REJECT,
-            )
-        ],
-        [btn("В меню", "nav:menu", ICON_MENU)],
-    ])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                btn(
+                    "Отклонить без причины",
+                    f"admin:reject_empty:{offer_id}",
+                    ICON_REJECT,
+                )
+            ],
+            [
+                btn(
+                    "В меню",
+                    "nav:menu",
+                    ICON_MENU,
+                )
+            ],
+        ]
+    )
 
 
 # ============================================================
@@ -548,6 +756,7 @@ async def render_ui(state, text, keyboard=None):
                 reply_markup=keyboard,
                 link_preview_options=NO_PREVIEW,
             )
+
             return True
 
         except TelegramBadRequest as exc:
@@ -564,7 +773,6 @@ async def render_ui(state, text, keyboard=None):
                 "Ошибка редактирования UI-сообщения"
             )
 
-    # Создаём новое сообщение только если отредактировать старое нельзя.
     try:
         new_message = await bot.send_message(
             chat_id=chat_id,
@@ -574,12 +782,14 @@ async def render_ui(state, text, keyboard=None):
         )
 
         await save_ui(state, new_message)
+
         return True
 
     except TelegramAPIError:
         logger.exception(
             "Не удалось отправить UI-сообщение"
         )
+
         return False
 
 
@@ -606,6 +816,7 @@ async def edit_or_send(message, text, keyboard=None):
                 reply_markup=keyboard,
                 link_preview_options=NO_PREVIEW,
             )
+
         except TelegramAPIError:
             logger.exception(
                 "Не удалось отправить карточку"
@@ -623,6 +834,7 @@ async def safe_answer(call, text=None, alert=False):
             text=text,
             show_alert=alert,
         )
+
     except TelegramAPIError:
         pass
 
@@ -630,6 +842,7 @@ async def safe_answer(call, text=None, alert=False):
 async def delete_user_message(message):
     try:
         await message.delete()
+
     except TelegramAPIError:
         logger.debug(
             "Не удалось удалить сообщение %s",
@@ -640,8 +853,7 @@ async def delete_user_message(message):
 async def show_menu(state, chat_id):
     await render_ui(
         state,
-        f"{E_MENU} <b>Telegram Offers</b>\n\n"
-        "Создавайте предложения и отслеживайте сделки.",
+        main_menu_text(),
         main_keyboard(),
     )
 
@@ -675,7 +887,10 @@ async def deliver_pending_offers(user):
                 UPDATE offers
                 SET recipient_id = ?, status = 'pending'
                 WHERE id = ?
-            """, (user.id, row["id"]))
+            """, (
+                user.id,
+                row["id"],
+            ))
 
             db.commit()
 
@@ -684,8 +899,10 @@ async def deliver_pending_offers(user):
                     row["sender_id"],
                     f"{E_ACCEPT} Оффер "
                     f"<code>{row['code']}</code> доставлен "
-                    f"получателю @{escape(row['recipient_username'])}.",
+                    f"получателю "
+                    f"@{escape(row['recipient_username'])}.",
                 )
+
             except TelegramAPIError:
                 logger.exception(
                     "Не удалось уведомить отправителя"
@@ -720,19 +937,19 @@ async def start(message: Message, state: FSMContext):
 
     try:
         await deliver_pending_offers(message.from_user)
+
     except Exception:
         logger.exception(
             "Ошибка доставки отложенных офферов"
         )
 
-    await delete_user_message(message)
+    # ВАЖНО:
+    # Сообщение /start НЕ удаляем.
+    # Здесь намеренно отсутствует delete_user_message(message).
 
     data = await state.get_data()
 
-    menu_text = (
-        f"{E_MENU} <b>Telegram Offers</b>\n\n"
-        "Создавайте предложения и отслеживайте сделки."
-    )
+    menu_text = main_menu_text()
 
     if data.get("ui_message_id"):
         await render_ui(
@@ -740,18 +957,23 @@ async def start(message: Message, state: FSMContext):
             menu_text,
             main_keyboard(),
         )
+
     else:
         menu = await bot.send_message(
             message.chat.id,
             menu_text,
             reply_markup=main_keyboard(),
+            link_preview_options=NO_PREVIEW,
         )
 
         await save_ui(state, menu)
 
 
 @dp.message(Command("cancel"))
-async def cancel_command(message: Message, state: FSMContext):
+async def cancel_command(
+    message: Message,
+    state: FSMContext,
+):
     await delete_user_message(message)
 
     data = await state.get_data()
@@ -767,11 +989,18 @@ async def cancel_command(message: Message, state: FSMContext):
 
 
 @dp.callback_query(F.data == "nav:menu")
-async def go_menu(call: CallbackQuery, state: FSMContext):
+async def go_menu(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     await state.clear()
+
     await save_ui(state, call.message)
 
-    await show_menu(state, call.message.chat.id)
+    await show_menu(
+        state,
+        call.message.chat.id,
+    )
 
     await safe_answer(call)
 
@@ -781,8 +1010,12 @@ async def go_menu(call: CallbackQuery, state: FSMContext):
 # ============================================================
 
 @dp.callback_query(F.data == "offer:create")
-async def offer_create(call: CallbackQuery, state: FSMContext):
+async def offer_create(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     await state.clear()
+
     await save_ui(state, call.message)
 
     await state.set_state(OfferForm.username)
@@ -790,8 +1023,10 @@ async def offer_create(call: CallbackQuery, state: FSMContext):
     await render_ui(
         state,
         f"{E_OFFER} <b>Новое предложение</b>\n\n"
-        "Введите username получателя, например <code>@username</code>.\n\n"
-        "Получатель должен запустить бота, чтобы получить оффер.",
+        "Введите username получателя, например "
+        "<code>@username</code>.\n\n"
+        "Получатель должен запустить бота, "
+        "чтобы получить оффер.",
         nav_keyboard(),
     )
 
@@ -799,7 +1034,10 @@ async def offer_create(call: CallbackQuery, state: FSMContext):
 
 
 @dp.message(OfferForm.username)
-async def offer_username(message: Message, state: FSMContext):
+async def offer_username(
+    message: Message,
+    state: FSMContext,
+):
     register_user(message.from_user)
 
     username = normalize_username(message.text or "")
@@ -814,18 +1052,26 @@ async def offer_username(message: Message, state: FSMContext):
             "Пример: <code>@username</code>.",
             nav_keyboard(),
         )
+
         return
 
     recipient = find_user(username)
-    recipient_id = recipient["user_id"] if recipient else 0
+
+    recipient_id = (
+        recipient["user_id"]
+        if recipient
+        else 0
+    )
 
     if recipient_id == message.from_user.id:
         await render_ui(
             state,
-            f"{E_REJECT} <b>Нельзя отправить оффер самому себе</b>\n\n"
+            f"{E_REJECT} "
+            "<b>Нельзя отправить оффер самому себе</b>\n\n"
             "Введите username другого пользователя.",
             nav_keyboard(),
         )
+
         return
 
     await state.update_data(
@@ -835,7 +1081,6 @@ async def offer_username(message: Message, state: FSMContext):
 
     await state.set_state(OfferForm.currency)
 
-    # Только заголовок и кнопки. Список валют текстом не дублируется.
     await render_ui(
         state,
         "Выберите валюту:",
@@ -844,13 +1089,17 @@ async def offer_username(message: Message, state: FSMContext):
 
 
 @dp.callback_query(F.data == "back:username")
-async def back_username(call: CallbackQuery, state: FSMContext):
+async def back_username(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     await state.set_state(OfferForm.username)
 
     await render_ui(
         state,
         f"{E_OFFER} <b>Получатель</b>\n\n"
-        "Введите username, например <code>@username</code>.",
+        "Введите username, например "
+        "<code>@username</code>.",
         nav_keyboard(),
     )
 
@@ -861,9 +1110,16 @@ async def back_username(call: CallbackQuery, state: FSMContext):
 # ВЫБОР ВАЛЮТЫ
 # ============================================================
 
-@dp.callback_query(OfferForm.currency, F.data.startswith("currency:"))
-async def offer_currency(call: CallbackQuery, state: FSMContext):
+@dp.callback_query(
+    OfferForm.currency,
+    F.data.startswith("currency:"),
+)
+async def offer_currency(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     key = call.data.split(":", 1)[1]
+
     selected = CURRENCIES.get(key)
 
     if not selected:
@@ -872,6 +1128,7 @@ async def offer_currency(call: CallbackQuery, state: FSMContext):
             "Неизвестная валюта.",
             True,
         )
+
         return
 
     currency, icon, _ = selected
@@ -895,7 +1152,10 @@ async def offer_currency(call: CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(F.data == "back:currency")
-async def back_currency(call: CallbackQuery, state: FSMContext):
+async def back_currency(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     data = await state.get_data()
 
     if not data.get("recipient_username"):
@@ -906,6 +1166,7 @@ async def back_currency(call: CallbackQuery, state: FSMContext):
             "Введите username получателя.",
             nav_keyboard(),
         )
+
     else:
         await state.set_state(OfferForm.currency)
 
@@ -923,18 +1184,25 @@ async def back_currency(call: CallbackQuery, state: FSMContext):
 # ============================================================
 
 @dp.message(OfferForm.amount)
-async def offer_amount(message: Message, state: FSMContext):
+async def offer_amount(
+    message: Message,
+    state: FSMContext,
+):
     value = (message.text or "").strip()
 
     await delete_user_message(message)
 
-    if not value.isdigit() or not 1 <= int(value) <= 1_000_000_000:
+    if (
+        not value.isdigit()
+        or not 1 <= int(value) <= 1_000_000_000
+    ):
         await render_ui(
             state,
             f"{E_REJECT} <b>Некорректная сумма</b>\n\n"
             "Введите целое число от 1 до 1 000 000 000.",
             nav_keyboard("back:currency"),
         )
+
         return
 
     await state.update_data(
@@ -947,14 +1215,18 @@ async def offer_amount(message: Message, state: FSMContext):
     await render_ui(
         state,
         f"{E_OFFER} <b>Добавление подарков</b>\n\n"
-        "Отправьте ссылку на подарок. Можно добавить несколько ссылок.\n"
+        "Отправьте ссылку на подарок. "
+        "Можно добавить несколько ссылок.\n"
         "Когда закончите, нажмите «Готово».",
         gifts_keyboard(),
     )
 
 
 @dp.callback_query(F.data == "back:amount")
-async def back_amount(call: CallbackQuery, state: FSMContext):
+async def back_amount(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     data = await state.get_data()
 
     await state.set_state(OfferForm.amount)
@@ -963,8 +1235,10 @@ async def back_amount(call: CallbackQuery, state: FSMContext):
         state,
         f"{data.get('currency_emoji', E_STARS)} "
         "<b>Стоимость оффера</b>\n\n"
-        f"Текущая сумма: <b>{data.get('amount', 'не указана')}</b>\n"
-        f"Валюта: <b>{escape(data.get('currency', 'Stars'))}</b>\n\n"
+        f"Текущая сумма: "
+        f"<b>{data.get('amount', 'не указана')}</b>\n"
+        f"Валюта: "
+        f"<b>{escape(data.get('currency', 'Stars'))}</b>\n\n"
         "Отправьте новую сумму, чтобы изменить её.",
         nav_keyboard("back:currency"),
     )
@@ -977,7 +1251,10 @@ async def back_amount(call: CallbackQuery, state: FSMContext):
 # ============================================================
 
 @dp.message(OfferForm.gifts)
-async def offer_add_gift(message: Message, state: FSMContext):
+async def offer_add_gift(
+    message: Message,
+    state: FSMContext,
+):
     url = (message.text or "").strip()
 
     await delete_user_message(message)
@@ -994,32 +1271,42 @@ async def offer_add_gift(message: Message, state: FSMContext):
             f"{E_OFFER} <b>Добавление подарков</b>\n\n"
             f"Добавлено подарков: "
             f"<b>{len(data.get('gift_urls', []))}</b>\n\n"
-            "Ссылка не распознана. Отправьте корректную ссылку.",
+            "Ссылка не распознана. "
+            "Отправьте корректную ссылку.",
             gifts_keyboard(),
         )
+
         return
 
     if not url.lower().startswith(("http://", "https://")):
         url = "https://" + url
 
     data = await state.get_data()
+
     urls = data.get("gift_urls", [])
 
     if url not in urls and len(urls) < 20:
         urls.append(url)
-        await state.update_data(gift_urls=urls)
+
+        await state.update_data(
+            gift_urls=urls
+        )
 
     await render_ui(
         state,
         f"{E_OFFER} <b>Добавление подарков</b>\n\n"
         f"Добавлено подарков: <b>{len(urls)}</b>\n\n"
-        "Отправьте следующую ссылку или нажмите «Готово».",
+        "Отправьте следующую ссылку "
+        "или нажмите «Готово».",
         gifts_keyboard(),
     )
 
 
 @dp.callback_query(F.data == "back:gifts")
-async def back_gifts(call: CallbackQuery, state: FSMContext):
+async def back_gifts(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     data = await state.get_data()
 
     await state.set_state(OfferForm.gifts)
@@ -1038,16 +1325,21 @@ async def back_gifts(call: CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(F.data == "gifts:done")
-async def gifts_done(call: CallbackQuery, state: FSMContext):
+async def gifts_done(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     if await state.get_state() != OfferForm.gifts.state:
         await safe_answer(
             call,
             "Этот этап уже завершён.",
             True,
         )
+
         return
 
     data = await state.get_data()
+
     urls = data.get("gift_urls", [])
 
     if not urls:
@@ -1056,16 +1348,18 @@ async def gifts_done(call: CallbackQuery, state: FSMContext):
             "Сначала добавьте хотя бы один подарок.",
             True,
         )
+
         return
 
     await state.set_state(OfferForm.confirm)
 
     await render_ui(
         state,
-        f"{E_OFFER} <b>Подтверждение оффера</b>\n\n"
+        f"{E_OFFER_SENT} <b>Подтверждение оффера</b>\n\n"
         f"Получатель: @{escape(data['recipient_username'])}\n"
         f"Стоимость: {data['amount']} "
-        f"{data['currency_emoji']} {escape(data['currency'])}\n\n"
+        f"{data['currency_emoji']} "
+        f"{escape(data['currency'])}\n\n"
         f"<b>Подарки ({len(urls)}):</b>\n"
         f"{gift_list_html(urls)}\n\n"
         "Проверьте данные перед отправкой.",
@@ -1080,18 +1374,23 @@ async def gifts_done(call: CallbackQuery, state: FSMContext):
 # ============================================================
 
 @dp.callback_query(F.data == "offer:confirm")
-async def offer_confirm(call: CallbackQuery, state: FSMContext):
+async def offer_confirm(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     if await state.get_state() != OfferForm.confirm.state:
         await safe_answer(
             call,
             "Этап завершён. Начните заново из меню.",
             True,
         )
+
         return
 
     data = await state.get_data()
 
     urls = data.get("gift_urls", [])
+
     recipient_username = data.get("recipient_username")
     recipient_id = data.get("recipient_id") or 0
 
@@ -1108,6 +1407,7 @@ async def offer_confirm(call: CallbackQuery, state: FSMContext):
             "Недостаточно данных.",
             True,
         )
+
         return
 
     code, offer_id = create_offer(
@@ -1120,6 +1420,7 @@ async def offer_confirm(call: CallbackQuery, state: FSMContext):
     )
 
     offer = get_offer(offer_id)
+
     delivered = False
 
     if recipient_id:
@@ -1130,6 +1431,7 @@ async def offer_confirm(call: CallbackQuery, state: FSMContext):
                 reply_markup=incoming_keyboard(offer_id),
                 link_preview_options=NO_PREVIEW,
             )
+
             delivered = True
 
         except TelegramAPIError:
@@ -1139,11 +1441,17 @@ async def offer_confirm(call: CallbackQuery, state: FSMContext):
                 recipient_id,
             )
 
-            # Оставляем оффер для повторной попытки при /start.
-            update_offer(offer_id, "pending_delivery")
+            update_offer(
+                offer_id,
+                "pending_delivery",
+            )
 
     await state.clear()
-    await save_ui(state, call.message)
+
+    await save_ui(
+        state,
+        call.message,
+    )
 
     if not delivered:
         await render_ui(
@@ -1153,49 +1461,80 @@ async def offer_confirm(call: CallbackQuery, state: FSMContext):
             f"Получатель: @{escape(recipient_username)}\n"
             f"Количество подарков: <b>{len(urls)}</b>\n\n"
             "Получатель ещё не запускал бота либо доставка "
-            "невозможна. Чтобы получить оффер, получателю нужно "
-            "открыть бота и нажать «Старт».\n\n"
+            "невозможна. Чтобы получить оффер, получателю "
+            "нужно открыть бота и нажать «Старт».\n\n"
             "Оффер сохранён в базе данных.",
             main_keyboard(),
         )
 
-        await safe_answer(call, "Оффер сохранён.")
+        await safe_answer(
+            call,
+            "Оффер сохранён.",
+        )
+
         return
 
     await render_ui(
         state,
-        f"{E_ACCEPT} <b>Оффер отправлен</b>\n\n"
+        f"{E_OFFER_SENT} <b>Оффер отправлен</b>\n\n"
         f"Номер: <code>{code}</code>\n"
         f"Количество подарков: <b>{len(urls)}</b>",
         main_keyboard(),
     )
 
-    await safe_answer(call, "Оффер отправлен.")
+    await safe_answer(
+        call,
+        "Оффер отправлен.",
+    )
 
 
 # ============================================================
-# ПРИНЯТЬ / ОТКЛОНИТЬ
+# ОТКЛОНИТЬ ОФФЕР
 # ============================================================
 
 @dp.callback_query(F.data.startswith("incoming:reject:"))
 async def reject_offer(call: CallbackQuery):
     try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
+        offer_id = int(
+            call.data.rsplit(":", 1)[1]
+        )
+
     except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный номер оффера.", True)
+        await safe_answer(
+            call,
+            "Некорректный номер оффера.",
+            True,
+        )
+
         return
 
     offer = get_offer(offer_id)
 
-    if not offer or offer["recipient_id"] != call.from_user.id:
-        await safe_answer(call, "Оффер не найден.", True)
+    if (
+        not offer
+        or offer["recipient_id"] != call.from_user.id
+    ):
+        await safe_answer(
+            call,
+            "Оффер не найден.",
+            True,
+        )
+
         return
 
     if offer["status"] != "pending":
-        await safe_answer(call, "Оффер уже обработан.", True)
+        await safe_answer(
+            call,
+            "Оффер уже обработан.",
+            True,
+        )
+
         return
 
-    update_offer(offer_id, "rejected")
+    update_offer(
+        offer_id,
+        "rejected",
+    )
 
     await edit_or_send(
         call.message,
@@ -1208,28 +1547,54 @@ async def reject_offer(call: CallbackQuery):
             f"{E_REJECT} Оффер "
             f"<code>{offer['code']}</code> отклонён.",
         )
+
     except TelegramAPIError:
         pass
 
     await safe_answer(call)
 
 
+# ============================================================
+# ПРИНЯТЬ ОФФЕР
+# ============================================================
+
 @dp.callback_query(F.data.startswith("incoming:accept:"))
 async def accept_offer(call: CallbackQuery):
     try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
+        offer_id = int(
+            call.data.rsplit(":", 1)[1]
+        )
+
     except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный номер оффера.", True)
+        await safe_answer(
+            call,
+            "Некорректный номер оффера.",
+            True,
+        )
+
         return
 
     offer = get_offer(offer_id)
 
-    if not offer or offer["recipient_id"] != call.from_user.id:
-        await safe_answer(call, "Оффер не найден.", True)
+    if (
+        not offer
+        or offer["recipient_id"] != call.from_user.id
+    ):
+        await safe_answer(
+            call,
+            "Оффер не найден.",
+            True,
+        )
+
         return
 
     if offer["status"] != "pending":
-        await safe_answer(call, "Оффер уже обработан.", True)
+        await safe_answer(
+            call,
+            "Оффер уже обработан.",
+            True,
+        )
+
         return
 
     deal_code = generate_deal_code()
@@ -1240,28 +1605,23 @@ async def accept_offer(call: CallbackQuery):
         deal_code=deal_code,
     )
 
-    urls = get_gift_urls(offer)
+    offer = get_offer(offer_id)
 
     await edit_or_send(
         call.message,
-        f"{E_OFFER} <b>Карточка сделки</b>\n\n"
-        f"Заказ: <code>#{deal_code}</code>\n"
-        f"Покупатель: {display_user(offer['sender_id'])}\n"
-        f"Стоимость: {offer['amount']} "
-        f"{currency_icon(offer['currency'])} "
-        f"{escape(offer['currency'])}\n\n"
-        f"<b>Подарки ({len(urls)}):</b>\n"
-        f"{gift_list_html(urls)}\n\n"
-        "<b>Статус:</b> Сделка открыта",
+        build_accepted_deal_text(offer),
         deal_keyboard(offer_id),
     )
 
     try:
         await bot.send_message(
             offer["sender_id"],
-            f"{E_ACCEPT} Оффер принят.\n"
-            f"Сделка: <code>#{deal_code}</code>",
+            f"{E_ACCEPT} <b>Оффер принят</b>\n\n"
+            f"Сделка: <code>#{deal_code}</code>\n\n"
+            "Передача подарка и расчёт должны "
+            "соответствовать согласованным условиям сделки.",
         )
+
     except TelegramAPIError:
         pass
 
@@ -1275,15 +1635,31 @@ async def accept_offer(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("deal:transfer:"))
 async def deal_transfer(call: CallbackQuery):
     try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
+        offer_id = int(
+            call.data.rsplit(":", 1)[1]
+        )
+
     except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный номер сделки.", True)
+        await safe_answer(
+            call,
+            "Некорректный номер сделки.",
+            True,
+        )
+
         return
 
     offer = get_offer(offer_id)
 
-    if not offer or offer["recipient_id"] != call.from_user.id:
-        await safe_answer(call, "Сделка не найдена.", True)
+    if (
+        not offer
+        or offer["recipient_id"] != call.from_user.id
+    ):
+        await safe_answer(
+            call,
+            "Сделка не найдена.",
+            True,
+        )
+
         return
 
     if offer["status"] != "deal_open":
@@ -1292,9 +1668,13 @@ async def deal_transfer(call: CallbackQuery):
             "Сделка уже отправлена или обработана.",
             True,
         )
+
         return
 
-    update_offer(offer_id, "review")
+    update_offer(
+        offer_id,
+        "review",
+    )
 
     await edit_or_send(
         call.message,
@@ -1309,6 +1689,7 @@ async def deal_transfer(call: CallbackQuery):
             f"<code>#{offer['deal_code']}</code> "
             "отправлена на проверку.",
         )
+
     except TelegramAPIError:
         pass
 
@@ -1335,12 +1716,16 @@ async def deal_transfer(call: CallbackQuery):
                 reply_markup=admin_keyboard(offer_id),
                 link_preview_options=NO_PREVIEW,
             )
+
         except TelegramAPIError:
             logger.exception(
                 "Не удалось уведомить администратора"
             )
 
-    await safe_answer(call, "Отправлено на проверку.")
+    await safe_answer(
+        call,
+        "Отправлено на проверку.",
+    )
 
 
 # ============================================================
@@ -1350,19 +1735,37 @@ async def deal_transfer(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("admin:approve:"))
 async def admin_approve(call: CallbackQuery):
     if call.from_user.id not in ADMIN_IDS:
-        await safe_answer(call, "Недостаточно прав.", True)
+        await safe_answer(
+            call,
+            "Недостаточно прав.",
+            True,
+        )
+
         return
 
     try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
+        offer_id = int(
+            call.data.rsplit(":", 1)[1]
+        )
+
     except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный номер.", True)
+        await safe_answer(
+            call,
+            "Некорректный номер.",
+            True,
+        )
+
         return
 
     offer = get_offer(offer_id)
 
     if not offer or offer["status"] != "review":
-        await safe_answer(call, "Заявка уже обработана.", True)
+        await safe_answer(
+            call,
+            "Заявка уже обработана.",
+            True,
+        )
+
         return
 
     update_offer(
@@ -1377,7 +1780,10 @@ async def admin_approve(call: CallbackQuery):
         f"Заказ: <code>#{offer['deal_code']}</code>",
     )
 
-    for uid in (offer["sender_id"], offer["recipient_id"]):
+    for uid in (
+        offer["sender_id"],
+        offer["recipient_id"],
+    ):
         try:
             await bot.send_message(
                 uid,
@@ -1385,34 +1791,69 @@ async def admin_approve(call: CallbackQuery):
                 f"<code>#{offer['deal_code']}</code> "
                 "подтверждена администрацией.",
             )
+
         except TelegramAPIError:
             pass
 
-    await safe_answer(call, "Подтверждено.")
+    await safe_answer(
+        call,
+        "Подтверждено.",
+    )
 
 
 @dp.callback_query(F.data.startswith("admin:reject:"))
-async def admin_reject(call: CallbackQuery, state: FSMContext):
+async def admin_reject(
+    call: CallbackQuery,
+    state: FSMContext,
+):
     if call.from_user.id not in ADMIN_IDS:
-        await safe_answer(call, "Недостаточно прав.", True)
+        await safe_answer(
+            call,
+            "Недостаточно прав.",
+            True,
+        )
+
         return
 
     try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
+        offer_id = int(
+            call.data.rsplit(":", 1)[1]
+        )
+
     except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный номер.", True)
+        await safe_answer(
+            call,
+            "Некорректный номер.",
+            True,
+        )
+
         return
 
     offer = get_offer(offer_id)
 
     if not offer or offer["status"] != "review":
-        await safe_answer(call, "Заявка уже обработана.", True)
+        await safe_answer(
+            call,
+            "Заявка уже обработана.",
+            True,
+        )
+
         return
 
     await state.clear()
-    await state.set_state(AdminReviewForm.comment)
-    await state.update_data(review_offer_id=offer_id)
-    await save_ui(state, call.message)
+
+    await state.set_state(
+        AdminReviewForm.comment
+    )
+
+    await state.update_data(
+        review_offer_id=offer_id
+    )
+
+    await save_ui(
+        state,
+        call.message,
+    )
 
     await render_ui(
         state,
@@ -1425,7 +1866,11 @@ async def admin_reject(call: CallbackQuery, state: FSMContext):
     await safe_answer(call)
 
 
-async def finalize_rejection(offer_id, admin_id, comment=""):
+async def finalize_rejection(
+    offer_id,
+    admin_id,
+    comment="",
+):
     offer = get_offer(offer_id)
 
     if not offer or offer["status"] != "review":
@@ -1446,9 +1891,16 @@ async def finalize_rejection(offer_id, admin_id, comment=""):
     if comment:
         text += f"\nПричина: {escape(comment)}"
 
-    for uid in (offer["sender_id"], offer["recipient_id"]):
+    for uid in (
+        offer["sender_id"],
+        offer["recipient_id"],
+    ):
         try:
-            await bot.send_message(uid, text)
+            await bot.send_message(
+                uid,
+                text,
+            )
+
         except TelegramAPIError:
             pass
 
@@ -1461,20 +1913,38 @@ async def admin_reject_empty(
     state: FSMContext,
 ):
     if call.from_user.id not in ADMIN_IDS:
-        await safe_answer(call, "Недостаточно прав.", True)
+        await safe_answer(
+            call,
+            "Недостаточно прав.",
+            True,
+        )
+
         return
 
     try:
-        offer_id = int(call.data.rsplit(":", 1)[1])
+        offer_id = int(
+            call.data.rsplit(":", 1)[1]
+        )
+
     except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный номер.", True)
+        await safe_answer(
+            call,
+            "Некорректный номер.",
+            True,
+        )
+
         return
 
     if not await finalize_rejection(
         offer_id,
         call.from_user.id,
     ):
-        await safe_answer(call, "Заявка уже обработана.", True)
+        await safe_answer(
+            call,
+            "Заявка уже обработана.",
+            True,
+        )
+
         return
 
     await state.clear()
@@ -1484,7 +1954,10 @@ async def admin_reject_empty(
         f"{E_REJECT} <b>Заявка отклонена</b>",
     )
 
-    await safe_answer(call, "Отклонено.")
+    await safe_answer(
+        call,
+        "Отклонено.",
+    )
 
 
 @dp.message(AdminReviewForm.comment)
@@ -1492,12 +1965,17 @@ async def admin_rejection_comment(
     message: Message,
     state: FSMContext,
 ):
-    if not message.from_user or message.from_user.id not in ADMIN_IDS:
+    if (
+        not message.from_user
+        or message.from_user.id not in ADMIN_IDS
+    ):
         await state.clear()
         return
 
     data = await state.get_data()
+
     offer_id = data.get("review_offer_id")
+
     comment = (message.text or "").strip()
 
     await delete_user_message(message)
@@ -1512,6 +1990,7 @@ async def admin_rejection_comment(
             "Введите причину длиной от 1 до 1000 символов.",
             admin_reject_keyboard(offer_id),
         )
+
         return
 
     if not await finalize_rejection(
@@ -1532,7 +2011,10 @@ async def admin_rejection_comment(
         reply_markup=main_keyboard(),
     )
 
-    await save_ui(state, result)
+    await save_ui(
+        state,
+        result,
+    )
 
 
 # ============================================================
@@ -1540,7 +2022,10 @@ async def admin_rejection_comment(
 # ============================================================
 
 @dp.message()
-async def fallback(message: Message, state: FSMContext):
+async def fallback(
+    message: Message,
+    state: FSMContext,
+):
     register_user(message.from_user)
 
     current_state = await state.get_state()
@@ -1552,28 +2037,38 @@ async def fallback(message: Message, state: FSMContext):
             message.text,
             message.from_user.id if message.from_user else None,
         )
+
         return
 
     await delete_user_message(message)
 
     data = await state.get_data()
 
-    if data.get("ui_chat_id") and data.get("ui_message_id"):
+    if (
+        data.get("ui_chat_id")
+        and data.get("ui_message_id")
+    ):
         await render_ui(
             state,
             f"{E_MENU} <b>Telegram Offers</b>\n\n"
-            "Используйте кнопки на экране или отправьте /start.",
+            "Используйте кнопки на экране "
+            "или отправьте /start.",
             main_keyboard(),
         )
+
     else:
         menu = await bot.send_message(
             message.chat.id,
             f"{E_MENU} <b>Telegram Offers</b>\n\n"
             "Используйте /start для открытия меню.",
             reply_markup=main_keyboard(),
+            link_preview_options=NO_PREVIEW,
         )
 
-        await save_ui(state, menu)
+        await save_ui(
+            state,
+            menu,
+        )
 
 
 # ============================================================
@@ -1581,7 +2076,10 @@ async def fallback(message: Message, state: FSMContext):
 # ============================================================
 
 async def main():
-    if not BOT_TOKEN or BOT_TOKEN == "ВСТАВЬ_СЮДА_ТОКЕН":
+    if (
+        not BOT_TOKEN
+        or BOT_TOKEN == "ВСТАВЬ_СЮДА_ТОКЕН"
+    ):
         raise RuntimeError(
             "Укажи настоящий токен в переменной окружения BOT_TOKEN."
         )
@@ -1596,6 +2094,7 @@ async def main():
 
     try:
         await dp.start_polling(bot)
+
     finally:
         await bot.session.close()
 
@@ -1603,5 +2102,6 @@ async def main():
 if __name__ == "__main__":
     try:
         asyncio.run(main())
+
     finally:
         db.close()
