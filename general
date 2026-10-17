@@ -61,7 +61,10 @@ NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 # ============================================================
 
 def emoji(emoji_id: str, fallback: str = "✨") -> str:
-    return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+    return (
+        f'<tg-emoji emoji-id="{emoji_id}">'
+        f'{fallback}</tg-emoji>'
+    )
 
 
 E_START = emoji("5409143419593321597")
@@ -542,12 +545,29 @@ async def save_ui(state, message):
 
 
 async def render_ui(state, text, keyboard=None):
+    """
+    Универсальный вывод интерфейса.
+
+    1. Пытается отредактировать существующее сообщение.
+    2. Если редактирование невозможно, отправляет новое.
+    3. Если Telegram отклоняет исходный HTML, отправляет
+       резервный обычный текст с той же клавиатурой.
+    """
+
     data = await state.get_data()
 
     chat_id = data.get("ui_chat_id")
     message_id = data.get("ui_message_id")
 
-    if chat_id and message_id:
+    if not chat_id:
+        logger.error("Не задан ui_chat_id")
+        return
+
+    # --------------------------------------------------------
+    # Попытка № 1: редактирование текущего сообщения
+    # --------------------------------------------------------
+
+    if message_id:
         try:
             await bot.edit_message_text(
                 chat_id=chat_id,
@@ -559,23 +579,29 @@ async def render_ui(state, text, keyboard=None):
             return
 
         except TelegramBadRequest as exc:
-            if "message is not modified" in str(exc).lower():
+            error = str(exc).lower()
+
+            if "message is not modified" in error:
                 return
 
             logger.warning(
-                "Не удалось изменить UI-сообщение: %s",
+                "Не удалось отредактировать сообщение: %s",
                 exc,
             )
 
         except TelegramAPIError:
-            logger.exception("Ошибка Telegram API при изменении UI")
+            logger.exception(
+                "Ошибка редактирования сообщения"
+            )
 
         except Exception:
-            logger.exception("Неожиданная ошибка изменения UI")
+            logger.exception(
+                "Неожиданная ошибка редактирования сообщения"
+            )
 
-    if not chat_id:
-        logger.error("Не задан ui_chat_id; UI-сообщение не отправлено")
-        return
+    # --------------------------------------------------------
+    # Попытка № 2: отправка исходного текста
+    # --------------------------------------------------------
 
     try:
         new_message = await bot.send_message(
@@ -586,9 +612,65 @@ async def render_ui(state, text, keyboard=None):
         )
 
         await save_ui(state, new_message)
+        return
+
+    except TelegramBadRequest as exc:
+        logger.warning(
+            "Не удалось отправить исходный текст: %s",
+            exc,
+        )
+
+    except TelegramAPIError:
+        logger.exception(
+            "Ошибка Telegram API при отправке исходного текста"
+        )
 
     except Exception:
-        logger.exception("Не удалось отправить UI-сообщение")
+        logger.exception(
+            "Неожиданная ошибка отправки исходного текста"
+        )
+
+    # --------------------------------------------------------
+    # Попытка № 3: обычный текст без HTML
+    # --------------------------------------------------------
+
+    plain_text = (
+        "Выберите валюту\n\n"
+        "⭐ Stars\n"
+        "💎 Gram\n"
+        "₽ RUB\n"
+        "$ USD"
+    )
+
+    try:
+        new_message = await bot.send_message(
+            chat_id=chat_id,
+            text=plain_text,
+            reply_markup=keyboard,
+            link_preview_options=NO_PREVIEW,
+        )
+
+        await save_ui(state, new_message)
+
+        logger.info(
+            "Сообщение отправлено в резервном режиме без HTML"
+        )
+
+    except TelegramBadRequest as exc:
+        logger.error(
+            "Telegram отклонил резервное сообщение: %s",
+            exc,
+        )
+
+    except TelegramAPIError:
+        logger.exception(
+            "Не удалось отправить резервное сообщение"
+        )
+
+    except Exception:
+        logger.exception(
+            "Неожиданная ошибка отправки резервного сообщения"
+        )
 
 
 async def edit_or_send(message, text, keyboard=None):
@@ -603,7 +685,10 @@ async def edit_or_send(message, text, keyboard=None):
         if "message is not modified" in str(exc).lower():
             return
 
-        logger.warning("Не удалось изменить карточку: %s", exc)
+        logger.warning(
+            "Не удалось изменить карточку: %s",
+            exc,
+        )
 
         try:
             await message.answer(
@@ -612,10 +697,14 @@ async def edit_or_send(message, text, keyboard=None):
                 link_preview_options=NO_PREVIEW,
             )
         except TelegramAPIError:
-            logger.exception("Не удалось отправить карточку")
+            logger.exception(
+                "Не удалось отправить карточку"
+            )
 
     except TelegramAPIError:
-        logger.exception("Ошибка Telegram API при редактировании карточки")
+        logger.exception(
+            "Ошибка Telegram API при редактировании карточки"
+        )
 
 
 async def safe_answer(call, text=None, alert=False):
@@ -706,7 +795,9 @@ async def start(message: Message, state: FSMContext):
     try:
         await deliver_pending_offers(message.from_user)
     except Exception:
-        logger.exception("Ошибка доставки отложенных офферов")
+        logger.exception(
+            "Ошибка доставки отложенных офферов"
+        )
 
     try:
         await message.answer(E_START)
@@ -784,7 +875,6 @@ async def offer_username(message: Message, state: FSMContext):
     raw_username = (message.text or "").strip()
     username = normalize_username(raw_username)
 
-    # Сохраняем текст до удаления, чтобы не потерять введённое значение.
     await delete_user_message(message)
 
     if not valid_username(username):
@@ -810,8 +900,6 @@ async def offer_username(message: Message, state: FSMContext):
         )
         return
 
-    # Ключевое исправление:
-    # сначала сохраняем получателя, затем переводим FSM в состояние валюты.
     await state.update_data(
         recipient_id=recipient_id,
         recipient_username=username,
@@ -861,7 +949,11 @@ async def offer_currency(call: CallbackQuery, state: FSMContext):
     selected = CURRENCIES.get(key)
 
     if not selected:
-        await safe_answer(call, "Неизвестная валюта.", True)
+        await safe_answer(
+            call,
+            "Неизвестная валюта.",
+            True,
+        )
         return
 
     currency, icon, _ = selected
@@ -1114,7 +1206,6 @@ async def offer_confirm(call: CallbackQuery, state: FSMContext):
     )
 
     offer = get_offer(offer_id)
-
     recipient_text = build_recipient_offer_text(offer)
 
     delivered = False
@@ -1177,7 +1268,11 @@ async def reject_offer(call: CallbackQuery):
     try:
         offer_id = int(call.data.rsplit(":", 1)[1])
     except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный номер оффера.", True)
+        await safe_answer(
+            call,
+            "Некорректный номер оффера.",
+            True,
+        )
         return
 
     offer = get_offer(offer_id)
@@ -1200,7 +1295,8 @@ async def reject_offer(call: CallbackQuery):
     try:
         await bot.send_message(
             offer["sender_id"],
-            f"{E_REJECT} Оффер <code>{offer['code']}</code> отклонён.",
+            f"{E_REJECT} Оффер "
+            f"<code>{offer['code']}</code> отклонён.",
         )
     except TelegramAPIError:
         pass
@@ -1213,7 +1309,11 @@ async def accept_offer(call: CallbackQuery):
     try:
         offer_id = int(call.data.rsplit(":", 1)[1])
     except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный номер оффера.", True)
+        await safe_answer(
+            call,
+            "Некорректный номер оффера.",
+            True,
+        )
         return
 
     offer = get_offer(offer_id)
@@ -1271,7 +1371,11 @@ async def deal_transfer(call: CallbackQuery):
     try:
         offer_id = int(call.data.rsplit(":", 1)[1])
     except (ValueError, IndexError):
-        await safe_answer(call, "Некорректный номер сделки.", True)
+        await safe_answer(
+            call,
+            "Некорректный номер сделки.",
+            True,
+        )
         return
 
     offer = get_offer(offer_id)
@@ -1299,7 +1403,8 @@ async def deal_transfer(call: CallbackQuery):
     try:
         await bot.send_message(
             offer["sender_id"],
-            f"{E_CLOCK} Сделка <code>#{offer['deal_code']}</code> "
+            f"{E_CLOCK} Сделка "
+            f"<code>#{offer['deal_code']}</code> "
             "отправлена на проверку.",
         )
     except TelegramAPIError:
@@ -1329,7 +1434,9 @@ async def deal_transfer(call: CallbackQuery):
                 link_preview_options=NO_PREVIEW,
             )
         except TelegramAPIError:
-            logger.exception("Не удалось уведомить администратора")
+            logger.exception(
+                "Не удалось уведомить администратора"
+            )
 
     await safe_answer(call, "Отправлено на проверку.")
 
@@ -1372,7 +1479,8 @@ async def admin_approve(call: CallbackQuery):
         try:
             await bot.send_message(
                 uid,
-                f"{E_ACCEPT} Сделка <code>#{offer['deal_code']}</code> "
+                f"{E_ACCEPT} Сделка "
+                f"<code>#{offer['deal_code']}</code> "
                 "подтверждена администрацией.",
             )
         except TelegramAPIError:
@@ -1464,7 +1572,11 @@ async def admin_reject_empty(
         offer_id,
         call.from_user.id,
     ):
-        await safe_answer(call, "Заявка уже обработана.", True)
+        await safe_answer(
+            call,
+            "Заявка уже обработана.",
+            True,
+        )
         return
 
     await state.clear()
@@ -1482,7 +1594,7 @@ async def admin_rejection_comment(
     message: Message,
     state: FSMContext,
 ):
-    if message.from_user.id not in ADMIN_IDS:
+    if not message.from_user or message.from_user.id not in ADMIN_IDS:
         await state.clear()
         return
 
@@ -1542,9 +1654,6 @@ async def fallback(message: Message, state: FSMContext):
             message.text,
             message.from_user.id if message.from_user else None,
         )
-
-        # Не удаляем сообщение и не сбрасываем FSM:
-        # пользователь сможет повторить ввод.
         return
 
     await delete_user_message(message)
