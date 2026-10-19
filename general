@@ -64,30 +64,30 @@ class OfferFlow(StatesGroup):
 
 def main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Создать оффер", callback_data="create_offer")],
-        [InlineKeyboardButton(text="⬅️ Выйти", callback_data="exit_main")],
+        [InlineKeyboardButton(text=e("➕ Создать оффер"), callback_data="create_offer")],
+        [InlineKeyboardButton(text=e("⬅️ Выйти"), callback_data="exit_main")],
     ])
 
 
 def back_kb(target):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back:{target}")],
+        [InlineKeyboardButton(text=e("⬅️ Назад"), callback_data=f"back:{target}")],
     ])
 
 
 def currency_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Star", callback_data="cur:⭐"),
-         InlineKeyboardButton(text="🪓 Rub", callback_data="cur:🪓")],
-        [InlineKeyboardButton(text="🔷 Gram", callback_data="cur:🔷"),
-         InlineKeyboardButton(text="💲 Dollar", callback_data="cur:💲")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back:link")],
+        [InlineKeyboardButton(text=e("⭐ Star"), callback_data="cur:⭐"),
+         InlineKeyboardButton(text=e("🪓 Rub"), callback_data="cur:🪓")],
+        [InlineKeyboardButton(text=e("🔷 Gram"), callback_data="cur:🔷"),
+         InlineKeyboardButton(text=e("💲 Dollar"), callback_data="cur:💲")],
+        [InlineKeyboardButton(text=e("⬅️ Назад"), callback_data="back:link")],
     ])
 
 
 def confirm_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Подтвердить оффер", callback_data="confirm_offer")],
+        [InlineKeyboardButton(text=e("✅ Подтвердить оффер"), callback_data="confirm_offer")],
     ])
 
 
@@ -110,8 +110,8 @@ async def send_offer_to_recipient(bot_instance, recipient_id, offer_id):
     o = offers[offer_id]
     text = f"Пользователь предлагает вам {o['amount']} {o['currency']} за подарок {o['link']}"
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"reject:{offer_id}"),
-        InlineKeyboardButton(text="✅ Принять", callback_data=f"accept:{offer_id}"),
+        InlineKeyboardButton(text=e("✖️ Отклонить"), callback_data=f"reject:{offer_id}"),
+        InlineKeyboardButton(text=e("✅ Принять"), callback_data=f"accept:{offer_id}"),
     ]])
     await bot_instance.send_message(recipient_id, e(text), reply_markup=kb)
 
@@ -375,7 +375,7 @@ async def cb_accept(cb: CallbackQuery):
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Подтвердить передачу", callback_data=f"transfer:{oid}"),
+        InlineKeyboardButton(text=e("✅ Подтвердить передачу"), callback_data=f"transfer:{oid}"),
     ]])
     await cb.message.edit_text(e(text), reply_markup=kb)
 
