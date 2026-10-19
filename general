@@ -64,30 +64,70 @@ class OfferFlow(StatesGroup):
 
 def main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=e("➕ Создать оффер"), callback_data="create_offer")],
-        [InlineKeyboardButton(text=e("⬅️ Выйти"), callback_data="exit_main")],
+        [InlineKeyboardButton(
+            text="Создать оффер",
+            callback_data="create_offer",
+            icon_custom_emoji_id=EMOJI_MAP["➕"]
+        )],
+        [InlineKeyboardButton(
+            text="Выйти",
+            callback_data="exit_main",
+            icon_custom_emoji_id=EMOJI_MAP["⬅️"]
+        )],
     ])
 
 
 def back_kb(target):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=e("⬅️ Назад"), callback_data=f"back:{target}")],
+        [InlineKeyboardButton(
+            text="Назад",
+            callback_data=f"back:{target}",
+            icon_custom_emoji_id=EMOJI_MAP["⬅️"]
+        )],
     ])
 
 
 def currency_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=e("⭐ Star"), callback_data="cur:⭐"),
-         InlineKeyboardButton(text=e("🪓 Rub"), callback_data="cur:🪓")],
-        [InlineKeyboardButton(text=e("🔷 Gram"), callback_data="cur:🔷"),
-         InlineKeyboardButton(text=e("💲 Dollar"), callback_data="cur:💲")],
-        [InlineKeyboardButton(text=e("⬅️ Назад"), callback_data="back:link")],
+        [
+            InlineKeyboardButton(
+                text="Star",
+                callback_data="cur:⭐",
+                icon_custom_emoji_id=EMOJI_MAP["⭐"]
+            ),
+            InlineKeyboardButton(
+                text="Rub",
+                callback_data="cur:🪓",
+                icon_custom_emoji_id=EMOJI_MAP["🪓"]
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="Gram",
+                callback_data="cur:🔷",
+                icon_custom_emoji_id=EMOJI_MAP["🔷"]
+            ),
+            InlineKeyboardButton(
+                text="Dollar",
+                callback_data="cur:💲",
+                icon_custom_emoji_id=EMOJI_MAP["💲"]
+            ),
+        ],
+        [InlineKeyboardButton(
+            text="Назад",
+            callback_data="back:link",
+            icon_custom_emoji_id=EMOJI_MAP["⬅️"]
+        )],
     ])
 
 
 def confirm_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=e("✅ Подтвердить оффер"), callback_data="confirm_offer")],
+        [InlineKeyboardButton(
+            text="Подтвердить оффер",
+            callback_data="confirm_offer",
+            icon_custom_emoji_id=EMOJI_MAP["✅"]
+        )],
     ])
 
 
@@ -110,8 +150,16 @@ async def send_offer_to_recipient(bot_instance, recipient_id, offer_id):
     o = offers[offer_id]
     text = f"Пользователь предлагает вам {o['amount']} {o['currency']} за подарок {o['link']}"
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=e("✖️ Отклонить"), callback_data=f"reject:{offer_id}"),
-        InlineKeyboardButton(text=e("✅ Принять"), callback_data=f"accept:{offer_id}"),
+        InlineKeyboardButton(
+            text="Отклонить",
+            callback_data=f"reject:{offer_id}",
+            icon_custom_emoji_id=EMOJI_MAP["✖️"]
+        ),
+        InlineKeyboardButton(
+            text="Принять",
+            callback_data=f"accept:{offer_id}",
+            icon_custom_emoji_id=EMOJI_MAP["✅"]
+        ),
     ]])
     await bot_instance.send_message(recipient_id, e(text), reply_markup=kb)
 
@@ -375,7 +423,11 @@ async def cb_accept(cb: CallbackQuery):
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=e("✅ Подтвердить передачу"), callback_data=f"transfer:{oid}"),
+        InlineKeyboardButton(
+            text="Подтвердить передачу",
+            callback_data=f"transfer:{oid}",
+            icon_custom_emoji_id=EMOJI_MAP["✅"]
+        ),
     ]])
     await cb.message.edit_text(e(text), reply_markup=kb)
 
