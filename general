@@ -68,6 +68,7 @@ TEXTS = {
         "t_link": "🗓️ Пришлите ссылку на подарок / подарки (если несколько — запишите в столбик)",
         "t_currency": "❓ В какой валюте проводим сделку",
         "t_amount": "👛 Укажите сумму сделки. Убедитесь, что она соответствует вашим возможностям и лимитам по выбранной валюте",
+        "choose_offer_lang": "🌐 Выберите язык, на котором будет оффер",
         "t_confirm": "✈️ Оффер готов к отправке, чтобы отправить нажмите кнопку ниже. Если вы не готовы или передумали — не нажимайте",
         "btn_confirm": "Подтвердить оффер",
         "btn_reject": "Отклонить",
@@ -119,6 +120,7 @@ TEXTS = {
         "t_link": "🗓️ Send the link to the gift / gifts (if several — list them one per line)",
         "t_currency": "❓ Which currency for the deal",
         "t_amount": "👛 Specify the deal amount. Make sure it matches your capabilities and limits for the chosen currency",
+        "choose_offer_lang": "🌐 Choose the language for the offer",
         "t_confirm": "✈️ The offer is ready to send, press the button below to send. If you're not ready or changed your mind — don't press",
         "btn_confirm": "Confirm offer",
         "btn_reject": "Decline",
@@ -170,6 +172,7 @@ TEXTS = {
         "t_link": "🗓️ 请发送礼物链接（如果多个——每行一个列出）",
         "t_currency": "❓ 交易使用哪种货币",
         "t_amount": "👛 请输入交易金额。请确保符合您的能力和所选货币的限额",
+        "choose_offer_lang": "🌐 选择报价使用的语言",
         "t_confirm": "✈️ 报价已准备好发送，点击下方按钮发送。如果您还没准备好或改变了主意——请勿点击",
         "btn_confirm": "确认报价",
         "btn_reject": "拒绝",
@@ -211,8 +214,7 @@ def get_lang(uid) -> str:
     return user_langs.get(uid, "ru")
 
 
-def t(uid, key: str, **kwargs) -> str:
-    lang = get_lang(uid)
+def t_lang(lang: str, key: str, **kwargs) -> str:
     text = TEXTS.get(lang, TEXTS["ru"]).get(key)
     if text is None:
         text = TEXTS["ru"].get(key, key)
@@ -222,6 +224,10 @@ def t(uid, key: str, **kwargs) -> str:
         except (KeyError, IndexError):
             pass
     return text
+
+
+def t(uid, key: str, **kwargs) -> str:
+    return t_lang(get_lang(uid), key, **kwargs)
 
 
 # ---------- Стейт/хранилище ----------
@@ -242,6 +248,7 @@ class OfferFlow(StatesGroup):
     link = State()
     currency = State()
     amount = State()
+    offer_lang = State()
     confirm = State()
 
 
@@ -310,6 +317,21 @@ def currency_kb(uid):
     ])
 
 
+def offer_language_kb(uid):
+    rows = []
+    for code, info in LANGUAGES.items():
+        rows.append([InlineKeyboardButton(
+            text=f"{info['flag']} {info['name']}",
+            callback_data=f"olang:{code}"
+        )])
+    rows.append([InlineKeyboardButton(
+        text=t(uid, "btn_back"),
+        callback_data="back:amount",
+        icon_custom_emoji_id=EMOJI_MAP["⬅️"]
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def confirm_kb(uid):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
@@ -343,19 +365,38 @@ def gen_id(n=8):
 LANG_PROMPT = "🌐 Choose language / Выберите язык / 选择语言"
 
 
+async def edit_or_send(message: Message, state: FSMContext, text: str, kb):
+    """Редактируем сохранённый промпт, чтобы не плодить сообщения."""
+    data = await state.get_data()
+    pid = data.get("prompt_msg_id")
+    if pid:
+        try:
+            await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=pid,
+                text=text,
+                reply_markup=kb,
+            )
+            return
+        except Exception:
+            pass
+    sent = await message.answer(text, reply_markup=kb)
+    await state.update_data(prompt_msg_id=sent.message_id)
+
+
 async def send_offer_to_recipient(bot_instance, recipient_id, offer_id):
     o = offers[offer_id]
-    uid = recipient_id
-    text = t(uid, "offer_to_recipient",
-             amount=o["amount"], currency=o["currency"], link=o["link"])
+    lang = o.get("lang", get_lang(recipient_id))
+    text = t_lang(lang, "offer_to_recipient",
+                  amount=o["amount"], currency=o["currency"], link=o["link"])
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
-            text=t(uid, "btn_reject"),
+            text=t_lang(lang, "btn_reject"),
             callback_data=f"reject:{offer_id}",
             icon_custom_emoji_id=EMOJI_MAP["✖️"]
         ),
         InlineKeyboardButton(
-            text=t(uid, "btn_accept"),
+            text=t_lang(lang, "btn_accept"),
             callback_data=f"accept:{offer_id}",
             icon_custom_emoji_id=EMOJI_MAP["✅"]
         ),
@@ -502,6 +543,7 @@ async def cb_create_offer(cb: CallbackQuery, state: FSMContext):
                     pass
             return
     await state.set_state(OfferFlow.username)
+    await state.update_data(prompt_msg_id=cb.message.message_id)
     await cb.message.edit_text(e(t(uid, "t_username")), reply_markup=back_kb(uid, "main"))
     await cb.answer()
 
@@ -525,15 +567,19 @@ async def cb_back(cb: CallbackQuery, state: FSMContext):
         await cb.message.edit_text(e(t(uid, "welcome")), reply_markup=main_menu_kb(uid))
     elif target == "username":
         await state.set_state(OfferFlow.username)
+        await state.update_data(prompt_msg_id=cb.message.message_id)
         await cb.message.edit_text(e(t(uid, "t_username")), reply_markup=back_kb(uid, "main"))
     elif target == "link":
         await state.set_state(OfferFlow.link)
+        await state.update_data(prompt_msg_id=cb.message.message_id)
         await cb.message.edit_text(e(t(uid, "t_link")), reply_markup=back_kb(uid, "username"))
     elif target == "currency":
         await state.set_state(OfferFlow.currency)
+        await state.update_data(prompt_msg_id=cb.message.message_id)
         await cb.message.edit_text(e(t(uid, "t_currency")), reply_markup=currency_kb(uid))
     elif target == "amount":
         await state.set_state(OfferFlow.amount)
+        await state.update_data(prompt_msg_id=cb.message.message_id)
         await cb.message.edit_text(e(t(uid, "t_amount")), reply_markup=back_kb(uid, "currency"))
     await cb.answer()
 
@@ -542,9 +588,22 @@ async def cb_back(cb: CallbackQuery, state: FSMContext):
 async def cb_currency(cb: CallbackQuery, state: FSMContext):
     uid = cb.from_user.id
     cur = cb.data.split(":", 1)[1]
-    await state.update_data(currency=cur)
+    await state.update_data(currency=cur, prompt_msg_id=cb.message.message_id)
     await state.set_state(OfferFlow.amount)
     await cb.message.edit_text(e(t(uid, "t_amount")), reply_markup=back_kb(uid, "currency"))
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("olang:"))
+async def cb_offer_lang(cb: CallbackQuery, state: FSMContext):
+    uid = cb.from_user.id
+    code = cb.data.split(":", 1)[1]
+    if code not in LANGUAGES:
+        await cb.answer()
+        return
+    await state.update_data(offer_lang=code, prompt_msg_id=cb.message.message_id)
+    await state.set_state(OfferFlow.confirm)
+    await cb.message.edit_text(e(t(uid, "t_confirm")), reply_markup=confirm_kb(uid))
     await cb.answer()
 
 
@@ -558,6 +617,8 @@ async def cb_confirm(cb: CallbackQuery, state: FSMContext):
         return
     await state.clear()
 
+    offer_lang = data.get("offer_lang", get_lang(uid))
+
     oid = gen_id()
     offer = {
         "id": oid,
@@ -567,6 +628,7 @@ async def cb_confirm(cb: CallbackQuery, state: FSMContext):
         "link": data["link"],
         "currency": data["currency"],
         "amount": data["amount"],
+        "lang": offer_lang,
         "status": "pending",
     }
     offers[oid] = offer
@@ -601,7 +663,7 @@ async def msg_username(message: Message, state: FSMContext):
         return
     await state.update_data(recipient=txt)
     await state.set_state(OfferFlow.link)
-    await message.answer(e(t(uid, "t_link")), reply_markup=back_kb(uid, "username"))
+    await edit_or_send(message, state, e(t(uid, "t_link")), back_kb(uid, "username"))
 
 
 @dp.message(OfferFlow.link)
@@ -609,7 +671,7 @@ async def msg_link(message: Message, state: FSMContext):
     uid = message.from_user.id
     await state.update_data(link=(message.text or "").strip())
     await state.set_state(OfferFlow.currency)
-    await message.answer(e(t(uid, "t_currency")), reply_markup=currency_kb(uid))
+    await edit_or_send(message, state, e(t(uid, "t_currency")), currency_kb(uid))
 
 
 @dp.message(OfferFlow.amount)
@@ -620,8 +682,8 @@ async def msg_amount(message: Message, state: FSMContext):
         await message.answer(t(uid, "invalid_amount"))
         return
     await state.update_data(amount=int(txt))
-    await state.set_state(OfferFlow.confirm)
-    await message.answer(e(t(uid, "t_confirm")), reply_markup=confirm_kb(uid))
+    await state.set_state(OfferFlow.offer_lang)
+    await edit_or_send(message, state, e(t(uid, "choose_offer_lang")), offer_language_kb(uid))
 
 
 @dp.callback_query(F.data.startswith("reject:"))
@@ -645,23 +707,24 @@ async def cb_accept(cb: CallbackQuery):
         await cb.answer()
         return
     o = offers[oid]
+    lang = o.get("lang", get_lang(uid))
 
-    await cb.answer(t(uid, "accept_alert"), show_alert=True)
+    await cb.answer(t_lang(lang, "accept_alert"), show_alert=True)
 
     trade_id = gen_id()
     cname = CURRENCY_NAMES.get(o["currency"], "")
 
-    text = t(uid, "trade_text",
-             trade_id=trade_id,
-             amount=o["amount"],
-             currency=o["currency"],
-             creator=o["creator_username"],
-             link=o["link"],
-             cname=cname)
+    text = t_lang(lang, "trade_text",
+                  trade_id=trade_id,
+                  amount=o["amount"],
+                  currency=o["currency"],
+                  creator=o["creator_username"],
+                  link=o["link"],
+                  cname=cname)
 
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
-            text=t(uid, "btn_transfer"),
+            text=t_lang(lang, "btn_transfer"),
             callback_data=f"transfer:{oid}",
             icon_custom_emoji_id=EMOJI_MAP["✅"]
         ),
@@ -673,9 +736,11 @@ async def cb_accept(cb: CallbackQuery):
 async def cb_transfer(cb: CallbackQuery):
     uid = cb.from_user.id
     oid = cb.data.split(":", 1)[1]
+    lang = get_lang(uid)
     if oid in offers:
         offers[oid]["status"] = "completed"
-    await cb.message.edit_text(e(t(uid, "transfer_done")))
+        lang = offers[oid].get("lang", lang)
+    await cb.message.edit_text(e(t_lang(lang, "transfer_done")))
     await cb.answer()
 
 
